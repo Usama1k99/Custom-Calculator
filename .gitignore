@@ -1,0 +1,65 @@
+# Planning & Agent Configurations (Non-Core Project Files)
+planning/
+.agent/
+.agents/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller & Build Caches
+*.manifest
+*.spec
+.build_cache/
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# SQLite Databases & Local Runtime Storage
+*.db
+*.sqlite
+*.sqlite3
+data/
+*.json
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Generated Assets & Debug Outputs
+assets/icons/generated/
+crash_reports/
+*.log
+*.png
+
