@@ -33,7 +33,7 @@ from src.ui.mode_icons import get_themed_svg_path
 from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
     VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
-    apply_update_and_restart, is_license_entry
+    apply_update_and_restart, is_license_entry, get_release_download_url
 )
 from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO, BUILD_STATUS
 
@@ -706,8 +706,6 @@ class ThemeDialog(QDialog):
         body = data.get("body", "No release notes available.")
         date = data.get("published_at", "")[:10]
         sha = data.get("target_commitish", "")[:7]
-        assets = data.get("assets", [])
-        has_binary = any(a.get("name", "").endswith(".exe") for a in assets)
 
         desc_parts = [f"Version: {tag}"]
         if sha:
@@ -725,32 +723,23 @@ class ThemeDialog(QDialog):
 
         self.btn_install_selected.setVisible(is_different)
         if is_different:
-            if has_binary:
-                self.btn_install_selected.setText(f"Switch to {tag}")
-            else:
-                self.btn_install_selected.setText(f"View {tag} on GitHub")
+            self.btn_install_selected.setText(f"Switch to {tag}")
 
     def _install_selected_build(self):
         data = self.builds_combo.currentData()
         if not data:
             return
-        assets = data.get("assets", [])
-        exe_asset = next((a for a in assets if a.get("name", "").endswith(".exe")), None)
-        if not exe_asset:
-            html_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}")
-            QDesktopServices.openUrl(QUrl(html_url))
-            self.build_details_lbl.setText(f"Opened {data.get('tag_name')} on GitHub in your default browser.")
-            return
 
-        download_url = exe_asset.get("browser_download_url")
-        if not download_url:
-            return
-
-        out_path = str(Path(tempfile.gettempdir()) / f"Calculator_{data.get('tag_name')}.exe")
+        tag = data.get("tag_name", f"v{APP_VERSION}")
+        download_url = get_release_download_url(data)
+        out_path = str(Path(tempfile.gettempdir()) / f"Calculator_{tag}.exe")
         self.btn_install_selected.setEnabled(False)
-        self.build_details_lbl.setText("Downloading standalone release binary...")
+        self.build_details_lbl.setText(f"Downloading {tag} standalone binary (0%)...")
 
         worker = BinaryDownloadWorker(download_url, out_path)
+
+        def on_progress(pct: int):
+            self.build_details_lbl.setText(f"Downloading {tag} standalone binary ({pct}%)...")
 
         def on_done(success: bool, path_or_err: str):
             self.btn_install_selected.setEnabled(True)
@@ -758,10 +747,12 @@ class ThemeDialog(QDialog):
                 self.build_details_lbl.setText("Download complete! Applying update and restarting...")
                 apply_update_and_restart(path_or_err)
             else:
-                self.build_details_lbl.setText(f"Download failed: {path_or_err}")
+                self.build_details_lbl.setText(f"Download failed: {path_or_err}. Please retry later.")
 
+        worker.progress.connect(on_progress)
         worker.finished.connect(on_done)
         worker.start()
+        self._download_worker = worker
 
     def _populate_presets(self, is_dark: Optional[bool] = None):
         if is_dark is None:

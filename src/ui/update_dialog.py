@@ -12,7 +12,8 @@ from PyQt6.QtWidgets import (
 )
 from src.version import APP_VERSION, BUILD_COMMIT
 from src.core.updater import (
-    BinaryDownloadWorker, fetch_all_releases, apply_update_and_restart, is_license_entry
+    BinaryDownloadWorker, fetch_all_releases, apply_update_and_restart,
+    is_license_entry, get_release_download_url
 )
 
 
@@ -49,10 +50,10 @@ class UpdatePromptDialog(QDialog):
         new_lbl.setStyleSheet("color: #10B981; font-weight: bold; font-size: 12px;")
         info_layout.addWidget(new_lbl)
 
-        notes_lbl = QLabel(f"Notes:\n{body[:120]}...")
-        notes_lbl.setStyleSheet("color: #bbb; font-size: 11px; margin-top: 4px;")
-        notes_lbl.setWordWrap(True)
-        info_layout.addWidget(notes_lbl)
+        self.notes_lbl = QLabel(f"Notes:\n{body[:120]}...")
+        self.notes_lbl.setStyleSheet("color: #bbb; font-size: 11px; margin-top: 4px;")
+        self.notes_lbl.setWordWrap(True)
+        info_layout.addWidget(self.notes_lbl)
 
         layout.addWidget(info_box)
 
@@ -114,21 +115,11 @@ class UpdatePromptDialog(QDialog):
         layout.addLayout(btn_row)
 
     def _start_download(self):
-        assets = self.release_info.get("assets", [])
-        exe_asset = next((a for a in assets if a.get("name", "").endswith(".exe")), None)
-
-        if not exe_asset:
-            from PyQt6.QtGui import QDesktopServices
-            from PyQt6.QtCore import QUrl
-            html_url = self.release_info.get("html_url", "https://github.com/Usama1k99/Custom-Calculator")
-            QDesktopServices.openUrl(QUrl(html_url))
-            self.accept()
-            return
-
-        download_url = exe_asset.get("browser_download_url")
+        download_url = get_release_download_url(self.release_info)
         out_file = str(Path(tempfile.gettempdir()) / "CustomCalculator_new.exe")
 
         self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
         self.update_btn.setEnabled(False)
         self.update_btn.setText("Downloading...")
 
@@ -142,8 +133,9 @@ class UpdatePromptDialog(QDialog):
             self.update_btn.setText("Restarting...")
             apply_update_and_restart(path_or_err)
         else:
-            self.update_btn.setText("Download Failed")
+            self.update_btn.setText("Retry Update")
             self.update_btn.setEnabled(True)
+            self.notes_lbl.setText(f"Update download failed: {path_or_err}")
 
     def _open_build_browser(self):
         self.accept()

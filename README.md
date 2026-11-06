@@ -44,12 +44,11 @@ A sleek, lightweight, distraction-free desktop calculator built with native Pyth
 ## Project Governance & Build Rules
 
 1. **Explicit Permission Required for Commits & Pushes:** Push and commit only when explicitly instructed by the user; bump version before pushing.
-2. **Mandatory Post-Push Executable Build:** Build standalone exe using PyInstaller after each commit and push.
-3. **Strict No-Emoji Policy:** Emoji usage is strictly prohibited anywhere in UI buttons, menus, dialogs, titles, or tooltips.
-4. **Zero-Dependency End-User Upgrades:** End users do not have Python or Git installed; software updates download pre-built release binaries from GitHub.
-5. **Pinned Expression Preview:** Pinned expression preview must remain visible after pressing `=` or `Enter`.
-6. **Automatic Gitignore Management:** Automatically add non-core project code files and folders to `.gitignore`.
-7. **Rigorous Edge Case Handling:** After each new core feature, consider and handle all edge cases (misinputs, empty/illogical inputs, math errors).
+2. **Strict No-Emoji Policy:** Emoji usage is strictly prohibited anywhere in UI buttons, menus, dialogs, titles, or tooltips.
+3. **Zero-Dependency End-User Upgrades:** End users do not have Python or Git installed; software updates download pre-built release binaries from GitHub.
+4. **Pinned Expression Preview:** Pinned expression preview must remain visible after pressing `=` or `Enter`.
+5. **Automatic Gitignore Management:** Automatically add non-core project code files and folders to `.gitignore`.
+6. **Rigorous Edge Case Handling:** After each new core feature, consider and handle all edge cases (misinputs, empty/illogical inputs, math errors).
 
 ---
 

@@ -837,6 +837,40 @@ class TestV2Features(unittest.TestCase):
         self.assertTrue(avail)
         self.assertEqual(info["tag_name"], "v0.3.0")
 
+    # ─── 36. DIRECT EXECUTABLE AUTO-UPDATE RESOLUTION ──────────────────
+    def test_get_release_download_url_and_fallbacks(self):
+        from src.core.updater import get_release_download_url
+        # 1. From release assets
+        rel_with_asset = {
+            "tag_name": "v0.3.0",
+            "assets": [{"name": "CustomCalculator.exe", "browser_download_url": "https://example.com/CustomCalculator.exe"}]
+        }
+        self.assertEqual(get_release_download_url(rel_with_asset), "https://example.com/CustomCalculator.exe")
+
+        # 2. From tag fallback
+        rel_no_asset = {"tag_name": "v0.3.0"}
+        self.assertEqual(
+            get_release_download_url(rel_no_asset),
+            "https://github.com/Usama1k99/Custom-Calculator/releases/download/v0.3.0/CustomCalculator.exe"
+        )
+
+        # 3. Canonical latest fallback
+        self.assertEqual(
+            get_release_download_url({}),
+            "https://github.com/Usama1k99/Custom-Calculator/releases/latest/download/CustomCalculator.exe"
+        )
+
+    # ─── 37. MAJOR/MINOR RELEASES FILTER ONLY (EXCLUDING PATCHES) ──────
+    def test_major_minor_release_filtering(self):
+        from scripts.publish_release import is_major_minor_release
+        self.assertTrue(is_major_minor_release("0.3.0"))
+        self.assertTrue(is_major_minor_release("v0.3.0"))
+        self.assertTrue(is_major_minor_release("v1.0.0"))
+        self.assertTrue(is_major_minor_release("2.5.0"))
+        self.assertFalse(is_major_minor_release("0.2.1"))
+        self.assertFalse(is_major_minor_release("v0.3.4"))
+        self.assertFalse(is_major_minor_release("1.0.1"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-11-07 (Official Release)
+
+### Added
+* Automated GitHub Releases Publishing (`.github/workflows/release.yml`, `scripts/publish_release.py`):
+  * Automated GitHub Actions release pipeline configured to trigger exclusively on major/minor version pushes (`v*.*.0`), compiling `CustomCalculator.exe` and publishing directly to GitHub Releases with zero manual steps.
+  * Added `scripts/publish_release.py` for direct authenticated API uploads using personal access tokens.
+* Direct In-App Executable Self-Update Engine (`src/core/updater.py`, `src/ui/update_dialog.py`, `src/ui/theme_dialog.py`):
+  * Replaced all fallback browser redirects with direct executable auto-updates: clicking "Update to Latest" or "Switch to Version" downloads the `.exe` directly inside the app with real-time percentage progress.
+  * Enhanced Windows process replacement (`apply_update_and_restart`): uses PID-targeted process monitoring (`tasklist /fi "PID eq %PID%"`) to cleanly wait for process exit, unlock file handles, replace the binary, and relaunch the updated calculator.
+  * Robust binary download fallback (`BinaryDownloadWorker`): resolves tag-specific release downloads and automatically falls back to canonical latest release endpoints.
+
+---
+
 ## [0.2.2] - 2026-11-07 (Pre-Release)
 
 ### Fixed
