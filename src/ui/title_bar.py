@@ -10,6 +10,7 @@ Replicates Windows 11 Fluent architecture with:
 - Zero emojis across all UI elements
 """
 
+import sys
 from pathlib import Path
 from PyQt6.QtCore import Qt, QPoint, QTimer
 from PyQt6.QtGui import QIcon, QFont
@@ -97,18 +98,27 @@ class CustomTitleBar(QFrame):
         layout.setSpacing(6)
 
         # App Icon
-        icon_path = Path("assets") / "icons" / "app_icon.ico"
-        icon_svg = Path("assets") / "icons" / "app_icon.svg"
-        if icon_svg.exists():
-            icon_lbl = QLabel()
-            icon_lbl.setPixmap(QIcon(str(icon_svg)).pixmap(16, 16))
-            icon_lbl.setFixedSize(16, 16)
-            layout.addWidget(icon_lbl)
-        elif icon_path.exists():
-            icon_lbl = QLabel()
-            icon_lbl.setPixmap(QIcon(str(icon_path)).pixmap(16, 16))
-            icon_lbl.setFixedSize(16, 16)
-            layout.addWidget(icon_lbl)
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent.parent))
+        icon_path = base_dir / "assets" / "icons" / "app_icon.ico"
+        icon_svg = base_dir / "assets" / "icons" / "app_icon.svg"
+        if not icon_svg.exists():
+            icon_svg = Path("assets") / "icons" / "app_icon.svg"
+        if not icon_path.exists():
+            icon_path = Path("assets") / "icons" / "app_icon.ico"
+
+        self.icon_lbl = QLabel(self)
+        self.icon_lbl.setObjectName("titleBarIcon")
+        self.icon_lbl.setFixedSize(16, 16)
+        self.icon_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+        if icon_path.exists():
+            self.icon_lbl.setPixmap(QIcon(str(icon_path)).pixmap(16, 16))
+        elif icon_svg.exists():
+            self.icon_lbl.setPixmap(QIcon(str(icon_svg)).pixmap(16, 16))
+        elif not self.parent_window.windowIcon().isNull():
+            self.icon_lbl.setPixmap(self.parent_window.windowIcon().pixmap(16, 16))
+
+        layout.addWidget(self.icon_lbl)
 
         # Title Label
         self.title_lbl = QLabel(title)

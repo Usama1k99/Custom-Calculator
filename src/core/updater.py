@@ -82,10 +82,6 @@ class VersionCheckWorker(QThread):
                         if parse_semver(tag) > parse_semver(APP_VERSION):
                             self.checkCompleted.emit(True, latest)
                             return
-                        sha = latest.get("target_commitish", "")[:7]
-                        if sha and sha != BUILD_COMMIT and not BUILD_COMMIT.startswith(sha):
-                            self.checkCompleted.emit(True, latest)
-                            return
         except Exception:
             pass
 
@@ -107,11 +103,7 @@ class VersionCheckWorker(QThread):
                         tag_ver = m.group(1) if m else ""
                         sha = latest_c.get("sha", "")[:7]
 
-                        is_newer = False
-                        if tag_ver and parse_semver(tag_ver) > parse_semver(APP_VERSION):
-                            is_newer = True
-                        elif sha and sha != BUILD_COMMIT and not BUILD_COMMIT.startswith(sha):
-                            is_newer = True
+                        is_newer = bool(tag_ver and parse_semver(tag_ver) > parse_semver(APP_VERSION))
 
                         if is_newer:
                             synth = {

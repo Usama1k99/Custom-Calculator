@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QWidget
 )
 from src.ui.mode_icons import get_themed_icon
+from src.version import APP_VERSION
 
 
 class NavButton(QPushButton):
@@ -77,7 +78,7 @@ class NavigationSidebar(QFrame):
 
         # Header with close / hamburger button
         top_row = QHBoxLayout()
-        top_row.setContentsMargins(6, 4, 6, 4)
+        top_row.setContentsMargins(6, 4, 12, 4)
         top_row.setSpacing(4)
 
         self.hamburger_btn = QPushButton()
@@ -91,6 +92,10 @@ class NavigationSidebar(QFrame):
         app_title = QLabel("Calculator")
         app_title.setStyleSheet("font-size: 16px; font-weight: 600; padding-left: 4px;")
         top_row.addWidget(app_title, stretch=1)
+
+        self.version_lbl = QLabel(f"v{APP_VERSION}")
+        self.version_lbl.setObjectName("SidebarVersionLbl")
+        top_row.addWidget(self.version_lbl)
 
         layout.addLayout(top_row)
 

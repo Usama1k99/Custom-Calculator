@@ -1,20 +1,20 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
-  <!-- Option 4: Ultra-Fine Precision Line Art -->
-  <rect x="9" y="5" width="46" height="54" rx="10" stroke="#F8FAFC" stroke-width="2.5" />
+  <!-- Outer App Tile -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#0F172A" stroke="#334155" stroke-width="2" />
   <!-- Display Screen Frame -->
-  <rect x="16" y="12" width="32" height="11" rx="4" stroke="#64748B" stroke-width="2" />
+  <rect x="12" y="10" width="40" height="13" rx="4" fill="#1E293B" stroke="#475569" stroke-width="1.5" />
   <!-- Display Indicator -->
-  <line x1="39" y1="17.5" x2="43" y2="17.5" stroke="#10B981" stroke-width="2" stroke-linecap="round" />
-  <!-- Grid Matrix of Pill Buttons -->
-  <rect x="16" y="28" width="8" height="6" rx="3" stroke="#94A3B8" stroke-width="2" />
-  <rect x="28" y="28" width="8" height="6" rx="3" stroke="#94A3B8" stroke-width="2" />
-  <rect x="40" y="28" width="8" height="6" rx="3" stroke="#F8FAFC" stroke-width="2" />
-
-  <rect x="16" y="38" width="8" height="6" rx="3" stroke="#94A3B8" stroke-width="2" />
-  <rect x="28" y="38" width="8" height="6" rx="3" stroke="#94A3B8" stroke-width="2" />
-  <rect x="40" y="38" width="8" height="6" rx="3" stroke="#F8FAFC" stroke-width="2" />
-
-  <rect x="16" y="47" width="8" height="6" rx="3" stroke="#94A3B8" stroke-width="2" />
-  <rect x="28" y="47" width="20" height="6" rx="3" fill="#10B981" stroke="#10B981" stroke-width="2" />
+  <line x1="40" y1="16.5" x2="47" y2="16.5" stroke="#10B981" stroke-width="2.5" stroke-linecap="round" />
+  <!-- Keypad Matrix -->
+  <!-- Row 1 -->
+  <rect x="12" y="27" width="10" height="7" rx="3" fill="#334155" />
+  <rect x="27" y="27" width="10" height="7" rx="3" fill="#334155" />
+  <rect x="42" y="27" width="10" height="7" rx="3" fill="#475569" />
+  <!-- Row 2 -->
+  <rect x="12" y="38" width="10" height="7" rx="3" fill="#334155" />
+  <rect x="27" y="38" width="10" height="7" rx="3" fill="#334155" />
+  <rect x="42" y="38" width="10" height="7" rx="3" fill="#475569" />
+  <!-- Row 3 -->
+  <rect x="12" y="49" width="10" height="7" rx="3" fill="#334155" />
+  <rect x="27" y="49" width="25" height="7" rx="3" fill="#10B981" />
 </svg>
-

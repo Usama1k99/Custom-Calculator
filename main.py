@@ -10,6 +10,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
 from src.core.crash_reporter import install_crash_handler
 from src.ui.main_window import MainWindow
+from src.version import APP_VERSION
 
 
 def main():
@@ -20,7 +21,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Usama1k99.CustomCalculator.App.0.2.0")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"Usama1k99.CustomCalculator.App.{APP_VERSION}")
         except Exception:
             pass
 

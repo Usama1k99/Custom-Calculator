@@ -62,4 +62,5 @@ assets/icons/generated/
 crash_reports/
 *.log
 *.png
+scratch/
 

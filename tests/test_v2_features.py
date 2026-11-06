@@ -779,13 +779,14 @@ class TestV2Features(unittest.TestCase):
     # ─── 35. LIVE COMMITS FALLBACK AND UPDATER BEHAVIOR ────────────────
     def test_live_commits_fallback_and_updater(self):
         from unittest.mock import patch
+        from src.version import APP_VERSION
         from src.core.updater import fetch_all_releases, VersionCheckWorker
 
         mock_commits = [
             {
                 "sha": "abc1234567890",
                 "commit": {
-                    "message": "v0.3.0: Major new feature release\n\nFull details",
+                    "message": f"v{APP_VERSION}: Major new feature release\n\nFull details",
                     "committer": {"date": "2026-11-07T00:00:00Z"}
                 },
                 "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/abc1234"
@@ -821,21 +822,56 @@ class TestV2Features(unittest.TestCase):
         with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
             releases = fetch_all_releases()
             self.assertEqual(len(releases), 1)
-            self.assertEqual(releases[0]["tag_name"], "v0.3.0")
+            self.assertEqual(releases[0]["tag_name"], f"v{APP_VERSION}")
             self.assertEqual(releases[0]["target_commitish"], "abc1234")
             self.assertTrue(releases[0]["is_commit_build"])
 
-        # Test VersionCheckWorker detects newer version from commits fallback
-        worker = VersionCheckWorker()
-        results = []
-        worker.checkCompleted.connect(lambda avail, info: results.append((avail, info)))
+        # Test VersionCheckWorker: when remote version matches APP_VERSION, no spurious update!
+        worker_same = VersionCheckWorker()
+        results_same = []
+        worker_same.checkCompleted.connect(lambda avail, info: results_same.append((avail, info)))
         with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
-            worker.run()
+            worker_same.run()
 
-        self.assertEqual(len(results), 1)
-        avail, info = results[0]
-        self.assertTrue(avail)
-        self.assertEqual(info["tag_name"], "v0.3.0")
+        self.assertEqual(len(results_same), 1)
+        avail, _ = results_same[0]
+        self.assertFalse(avail)  # Must be False when on latest release!
+
+        # Test VersionCheckWorker: when remote version is newer (v99.0.0), update IS detected!
+        mock_newer_commits = [
+            {
+                "sha": "9999999",
+                "commit": {
+                    "message": "v99.0.0: Future update\n\nNotes",
+                    "committer": {"date": "2026-11-08T00:00:00Z"}
+                },
+                "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/9999999"
+            }
+        ]
+        def mock_newer_urlopen(req, timeout=None):
+            class MockResponse:
+                def __init__(self, data):
+                    self.data = data
+                def read(self):
+                    return json.dumps(self.data).encode("utf-8")
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            if "releases" in req.full_url:
+                return MockResponse([])
+            return MockResponse(mock_newer_commits)
+
+        worker_newer = VersionCheckWorker()
+        results_newer = []
+        worker_newer.checkCompleted.connect(lambda avail, info: results_newer.append((avail, info)))
+        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_newer_urlopen):
+            worker_newer.run()
+
+        self.assertEqual(len(results_newer), 1)
+        avail_newer, info_newer = results_newer[0]
+        self.assertTrue(avail_newer)
+        self.assertEqual(info_newer["tag_name"], "v99.0.0")
 
     # ─── 36. DIRECT EXECUTABLE AUTO-UPDATE RESOLUTION ──────────────────
     def test_get_release_download_url_and_fallbacks(self):
@@ -870,6 +906,45 @@ class TestV2Features(unittest.TestCase):
         self.assertFalse(is_major_minor_release("0.2.1"))
         self.assertFalse(is_major_minor_release("v0.3.4"))
         self.assertFalse(is_major_minor_release("1.0.1"))
+
+    # ─── 38. TITLE BAR ICON & SIDEBAR VERSION LABEL ───────────────────
+    def test_titlebar_icon_and_sidebar_version_label(self):
+        from src.version import APP_VERSION
+        # Check title bar icon widget exists and has a non-null pixmap
+        self.assertTrue(hasattr(self.win.title_bar, "icon_lbl"))
+        self.assertIsNotNone(self.win.title_bar.icon_lbl.pixmap())
+        self.assertFalse(self.win.title_bar.icon_lbl.pixmap().isNull())
+
+        # Check sidebar version label exists and matches current APP_VERSION
+        self.assertTrue(hasattr(self.win.sidebar, "version_lbl"))
+        self.assertEqual(self.win.sidebar.version_lbl.text(), f"v{APP_VERSION}")
+
+    # ─── 39. SWITCH VERSION & INSTALL BUILD WORKER TEST ───────────────
+    def test_switch_version_installs_build_without_name_error(self):
+        from unittest.mock import patch, MagicMock
+        from src.ui.theme_dialog import ThemeDialog
+        from src.ui.theme_manager import ThemeManager
+
+        tm = ThemeManager()
+        dlg = ThemeDialog(tm, initial_tab=1)
+        # Simulate an older build entry like v0.2.2
+        older_data = {"tag_name": "v0.2.2", "body": "Release 0.2.2 notes", "assets": []}
+        dlg.builds_combo.addItem("v0.2.2", older_data)
+        dlg.builds_combo.setCurrentIndex(dlg.builds_combo.count() - 1)
+
+        self.assertFalse(dlg.btn_install_selected.isHidden())
+        self.assertEqual(dlg.btn_install_selected.text(), "Switch to v0.2.2")
+
+        with patch("src.ui.theme_dialog.BinaryDownloadWorker") as MockWorker:
+            mock_inst = MagicMock()
+            MockWorker.return_value = mock_inst
+            # Invoking _install_selected_build must not crash with NameError (e.g. tempfile)
+            dlg._install_selected_build()
+            self.assertTrue(MockWorker.called)
+            # Verify out_path was formatted into temp dir
+            download_url, out_path = MockWorker.call_args[0]
+            self.assertIn("Calculator_v0.2.2.exe", out_path)
+            self.assertTrue(mock_inst.start.called)
 
 
 if __name__ == "__main__":

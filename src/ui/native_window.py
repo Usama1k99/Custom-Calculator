@@ -232,6 +232,28 @@ def apply_native_window_frame(window: QWidget) -> None:
 
         # Trigger WM_NCCALCSIZE
         user32.SetWindowPos(ctypes.c_void_p(hwnd), 0, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+
+        # Explicitly bind native icon to HWND for Windows Taskbar and Alt-Tab
+        try:
+            from pathlib import Path
+            base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent.parent))
+            icon_ico = base_dir / "assets" / "icons" / "app_icon.ico"
+            if not icon_ico.exists():
+                icon_ico = Path("assets") / "icons" / "app_icon.ico"
+            if icon_ico.exists():
+                WM_SETICON = 0x0080
+                ICON_SMALL = 0
+                ICON_BIG = 1
+                IMAGE_ICON = 1
+                LR_LOADFROMFILE = 0x00000010
+                hicon_big = user32.LoadImageW(None, str(icon_ico.resolve()), IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+                hicon_small = user32.LoadImageW(None, str(icon_ico.resolve()), IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+                if hicon_big:
+                    user32.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON, ICON_BIG, hicon_big)
+                if hicon_small:
+                    user32.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON, ICON_SMALL, hicon_small)
+        except Exception:
+            pass
     except Exception:
         pass
 

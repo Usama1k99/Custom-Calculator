@@ -13,6 +13,7 @@ Includes:
 from pathlib import Path
 import json
 import re
+import tempfile
 from typing import Dict, Any, Optional
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
@@ -35,7 +36,6 @@ from src.core.updater import (
     VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
     apply_update_and_restart, is_license_entry, get_release_download_url
 )
-from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO, BUILD_STATUS
 
 
 class ThemeNameDialog(QDialog):
@@ -679,7 +679,7 @@ class ThemeDialog(QDialog):
                 continue
             tag = rel.get("tag_name", "Release")
             sha = rel.get("target_commitish", "")[:7]
-            is_curr = (tag.lstrip("v") == APP_VERSION) or (sha and sha == BUILD_COMMIT)
+            is_curr = (tag.lstrip("v") == APP_VERSION)
             if is_curr:
                 found_current = True
                 installed_idx = self.builds_combo.count()

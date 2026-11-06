@@ -119,3 +119,4 @@ if __name__ == "__main__":
         sys.exit(1)
     success = publish(token)
     sys.exit(0 if success else 1)
+

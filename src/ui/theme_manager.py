@@ -549,6 +549,13 @@ class ThemeManager:
             background-color: {t['bg_surface']};
             border-right: 1px solid {t['border_subtle']};
         }}
+        QLabel#SidebarVersionLbl {{
+            font-size: 11px;
+            color: {t['text_secondary']};
+            font-weight: 500;
+            background: transparent;
+            padding-right: 6px;
+        }}
         QScrollArea#NavScrollArea,
         QWidget#NavScrollContainer,
         QScrollArea#NavScrollArea > QWidget > QWidget {{
