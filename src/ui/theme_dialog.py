@@ -34,7 +34,7 @@ from src.ui.mode_icons import get_themed_svg_path
 from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
     VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
-    apply_update_and_restart, is_license_entry, get_release_download_url
+    apply_update_and_restart, is_license_entry, get_release_download_url, parse_semver
 )
 
 
@@ -717,13 +717,14 @@ class ThemeDialog(QDialog):
         desc = f"{header_line}\n{first_line[:140]}"
         self.build_details_lbl.setText(desc)
 
-        is_different = (tag.lstrip("v") != APP_VERSION)
-        if sha and sha == BUILD_COMMIT:
-            is_different = False
-
+        tag_ver = tag.lstrip("v")
+        is_different = (tag_ver != APP_VERSION)
         self.btn_install_selected.setVisible(is_different)
         if is_different:
-            self.btn_install_selected.setText(f"Switch to {tag}")
+            if parse_semver(tag_ver) > parse_semver(APP_VERSION):
+                self.btn_install_selected.setText(f"Update to {tag}")
+            else:
+                self.btn_install_selected.setText(f"Switch to {tag}")
 
     def _install_selected_build(self):
         data = self.builds_combo.currentData()
@@ -734,6 +735,7 @@ class ThemeDialog(QDialog):
         download_url = get_release_download_url(data)
         out_path = str(Path(tempfile.gettempdir()) / f"Calculator_{tag}.exe")
         self.btn_install_selected.setEnabled(False)
+        self.btn_check_updates.setEnabled(False)
         self.build_details_lbl.setText(f"Downloading {tag} standalone binary (0%)...")
 
         worker = BinaryDownloadWorker(download_url, out_path)
@@ -743,6 +745,7 @@ class ThemeDialog(QDialog):
 
         def on_done(success: bool, path_or_err: str):
             self.btn_install_selected.setEnabled(True)
+            self.btn_check_updates.setEnabled(True)
             if success:
                 self.build_details_lbl.setText("Download complete! Applying update and restarting...")
                 apply_update_and_restart(path_or_err)

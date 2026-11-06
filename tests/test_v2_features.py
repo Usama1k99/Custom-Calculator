@@ -777,31 +777,47 @@ class TestV2Features(unittest.TestCase):
         self.assertFalse(parse_semver("0.2.0") > parse_semver("0.2.1"))
 
     # ─── 35. LIVE COMMITS FALLBACK AND UPDATER BEHAVIOR ────────────────
-    def test_live_commits_fallback_and_updater(self):
+    def test_fetch_all_releases_and_updater(self):
         from unittest.mock import patch
         from src.version import APP_VERSION
         from src.core.updater import fetch_all_releases, VersionCheckWorker
 
-        mock_commits = [
+        mock_releases = [
             {
-                "sha": "abc1234567890",
-                "commit": {
-                    "message": f"v{APP_VERSION}: Major new feature release\n\nFull details",
-                    "committer": {"date": "2026-11-07T00:00:00Z"}
-                },
-                "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/abc1234"
+                "tag_name": "v0.0.1",
+                "name": "Custom Calculator v0.0.1",
+                "body": "Older release notes",
+                "draft": False,
+                "assets": [{"name": "CustomCalculator.exe", "browser_download_url": "https://github.com/.../v0.0.1"}]
             },
             {
-                "sha": "def5678901234",
-                "commit": {
-                    "message": "Update LICENSE\n\nLicense change",
-                    "committer": {"date": "2026-11-06T00:00:00Z"}
-                },
-                "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/def5678"
+                "tag_name": "v99.0.0",
+                "name": "Custom Calculator v99.0.0",
+                "body": "Future major release notes",
+                "draft": False,
+                "assets": [{"name": "CustomCalculator.exe", "browser_download_url": "https://github.com/.../v99.0.0"}]
+            },
+            {
+                "tag_name": f"v{APP_VERSION}",
+                "name": f"Custom Calculator v{APP_VERSION}",
+                "body": "Current active release notes",
+                "draft": False,
+                "assets": [{"name": "CustomCalculator.exe", "browser_download_url": f"https://github.com/.../v{APP_VERSION}"}]
+            },
+            {
+                "tag_name": "v100.0.0-draft",
+                "name": "Draft release",
+                "draft": True,
+                "assets": []
+            },
+            {
+                "tag_name": "v0.0.2",
+                "name": "Update LICENSE",
+                "draft": False,
+                "assets": []
             }
         ]
 
-        # Test fetch_all_releases fallback when releases endpoint is empty
         def mock_urlopen(req, timeout=None):
             class MockResponse:
                 def __init__(self, data):
@@ -813,65 +829,52 @@ class TestV2Features(unittest.TestCase):
                 def __exit__(self, *args):
                     pass
 
-            if "releases" in req.full_url:
-                return MockResponse([])
-            elif "commits" in req.full_url:
-                return MockResponse(mock_commits)
-            return MockResponse([])
+            return MockResponse(mock_releases)
 
         with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
             releases = fetch_all_releases()
-            self.assertEqual(len(releases), 1)
-            self.assertEqual(releases[0]["tag_name"], f"v{APP_VERSION}")
-            self.assertEqual(releases[0]["target_commitish"], "abc1234")
-            self.assertTrue(releases[0]["is_commit_build"])
+            # Must exclude draft and license, and must be sorted descending by semver
+            self.assertEqual(len(releases), 3)
+            self.assertEqual(releases[0]["tag_name"], "v99.0.0")
+            self.assertEqual(releases[1]["tag_name"], f"v{APP_VERSION}")
+            self.assertEqual(releases[2]["tag_name"], "v0.0.1")
 
-        # Test VersionCheckWorker: when remote version matches APP_VERSION, no spurious update!
-        worker_same = VersionCheckWorker()
-        results_same = []
-        worker_same.checkCompleted.connect(lambda avail, info: results_same.append((avail, info)))
-        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
-            worker_same.run()
-
-        self.assertEqual(len(results_same), 1)
-        avail, _ = results_same[0]
-        self.assertFalse(avail)  # Must be False when on latest release!
-
-        # Test VersionCheckWorker: when remote version is newer (v99.0.0), update IS detected!
-        mock_newer_commits = [
-            {
-                "sha": "9999999",
-                "commit": {
-                    "message": "v99.0.0: Future update\n\nNotes",
-                    "committer": {"date": "2026-11-08T00:00:00Z"}
-                },
-                "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/9999999"
-            }
-        ]
-        def mock_newer_urlopen(req, timeout=None):
-            class MockResponse:
-                def __init__(self, data):
-                    self.data = data
-                def read(self):
-                    return json.dumps(self.data).encode("utf-8")
-                def __enter__(self):
-                    return self
-                def __exit__(self, *args):
-                    pass
-            if "releases" in req.full_url:
-                return MockResponse([])
-            return MockResponse(mock_newer_commits)
-
+        # Test VersionCheckWorker detects newer version (v99.0.0) over APP_VERSION
         worker_newer = VersionCheckWorker()
         results_newer = []
         worker_newer.checkCompleted.connect(lambda avail, info: results_newer.append((avail, info)))
-        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_newer_urlopen):
+        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
             worker_newer.run()
 
         self.assertEqual(len(results_newer), 1)
         avail_newer, info_newer = results_newer[0]
         self.assertTrue(avail_newer)
         self.assertEqual(info_newer["tag_name"], "v99.0.0")
+
+        # Test VersionCheckWorker when releases only contain current/older releases
+        only_current_and_older = [
+            {"tag_name": f"v{APP_VERSION}", "name": "Current", "draft": False, "assets": []},
+            {"tag_name": "v0.1.0", "name": "Old", "draft": False, "assets": []}
+        ]
+        def mock_current_urlopen(req, timeout=None):
+            class MockResponse:
+                def read(self):
+                    return json.dumps(only_current_and_older).encode("utf-8")
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return MockResponse()
+
+        worker_same = VersionCheckWorker()
+        results_same = []
+        worker_same.checkCompleted.connect(lambda avail, info: results_same.append((avail, info)))
+        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_current_urlopen):
+            worker_same.run()
+
+        self.assertEqual(len(results_same), 1)
+        avail_same, _ = results_same[0]
+        self.assertFalse(avail_same)  # Must be False when on latest release!
 
     # ─── 36. DIRECT EXECUTABLE AUTO-UPDATE RESOLUTION ──────────────────
     def test_get_release_download_url_and_fallbacks(self):
@@ -945,6 +948,44 @@ class TestV2Features(unittest.TestCase):
             download_url, out_path = MockWorker.call_args[0]
             self.assertIn("Calculator_v0.2.2.exe", out_path)
             self.assertTrue(mock_inst.start.called)
+
+
+    # ─── 40. PAST & FUTURE RELEASES LISTING AND SWITCHING ─────────────
+    def test_populate_builds_list_shows_past_and_newer_releases_with_proper_switch_action(self):
+        from src.version import APP_VERSION
+        from src.ui.theme_dialog import ThemeDialog
+        from src.ui.theme_manager import ThemeManager
+
+        tm = ThemeManager()
+        dlg = ThemeDialog(tm, initial_tab=1)
+
+        test_releases = [
+            {"tag_name": "v99.0.0", "name": "Newer", "body": "Future update", "assets": []},
+            {"tag_name": f"v{APP_VERSION}", "name": "Current", "body": "Active build", "assets": []},
+            {"tag_name": "v0.0.1", "name": "Older", "body": "Past release", "assets": []}
+        ]
+
+        dlg._populate_builds_list(test_releases)
+
+        # 3 items in dropdown
+        self.assertEqual(dlg.builds_combo.count(), 3)
+        self.assertEqual(dlg.builds_combo.itemText(0), "v99.0.0")
+        self.assertEqual(dlg.builds_combo.itemText(1), f"v{APP_VERSION} (Installed Current)")
+        self.assertEqual(dlg.builds_combo.itemText(2), "v0.0.1")
+
+        # Current version is selected by default and switch button is hidden
+        self.assertEqual(dlg.builds_combo.currentIndex(), 1)
+        self.assertTrue(dlg.btn_install_selected.isHidden())
+
+        # Select older release: button says "Switch to v0.0.1"
+        dlg.builds_combo.setCurrentIndex(2)
+        self.assertFalse(dlg.btn_install_selected.isHidden())
+        self.assertEqual(dlg.btn_install_selected.text(), "Switch to v0.0.1")
+
+        # Select newer release: button says "Update to v99.0.0"
+        dlg.builds_combo.setCurrentIndex(0)
+        self.assertFalse(dlg.btn_install_selected.isHidden())
+        self.assertEqual(dlg.btn_install_selected.text(), "Update to v99.0.0")
 
 
 if __name__ == "__main__":

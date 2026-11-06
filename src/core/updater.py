@@ -66,57 +66,25 @@ class VersionCheckWorker(QThread):
     checkCompleted = pyqtSignal(bool, dict)  # (update_available, latest_release_info)
 
     def run(self):
-        # 1. Primary check: GitHub Releases API
+        # Primary check: GitHub Releases API (/releases)
         try:
             req = urllib.request.Request(
-                f"{GITHUB_API_URL}/releases",
+                f"{GITHUB_API_URL}/releases?per_page=30",
                 headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
             )
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 if isinstance(data, list) and len(data) > 0:
-                    valid_rels = [r for r in data if not is_license_entry(r)]
+                    valid_rels = [
+                        r for r in data
+                        if not is_license_entry(r) and not r.get("draft", False)
+                    ]
                     if valid_rels:
+                        valid_rels.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
                         latest = valid_rels[0]
                         tag = latest.get("tag_name", "").lstrip("v")
                         if parse_semver(tag) > parse_semver(APP_VERSION):
                             self.checkCompleted.emit(True, latest)
-                            return
-        except Exception:
-            pass
-
-        # 2. Live fallback check: GitHub Commits API
-        try:
-            req = urllib.request.Request(
-                f"{GITHUB_API_URL}/commits?per_page=30",
-                headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
-            )
-            with urllib.request.urlopen(req, timeout=3.5) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                if isinstance(data, list) and len(data) > 0:
-                    valid_commits = [c for c in data if not is_license_entry(c)]
-                    if valid_commits:
-                        latest_c = valid_commits[0]
-                        msg = latest_c.get("commit", {}).get("message", "")
-                        first_line = msg.splitlines()[0] if msg else ""
-                        m = re.search(r"v?(\d+\.\d+(?:\.\d+)?)", first_line)
-                        tag_ver = m.group(1) if m else ""
-                        sha = latest_c.get("sha", "")[:7]
-
-                        is_newer = bool(tag_ver and parse_semver(tag_ver) > parse_semver(APP_VERSION))
-
-                        if is_newer:
-                            synth = {
-                                "tag_name": f"v{tag_ver}" if tag_ver else f"Commit {sha}",
-                                "name": first_line,
-                                "body": msg,
-                                "published_at": latest_c.get("commit", {}).get("committer", {}).get("date", ""),
-                                "target_commitish": sha,
-                                "html_url": latest_c.get("html_url", ""),
-                                "assets": [],
-                                "is_commit_build": True
-                            }
-                            self.checkCompleted.emit(True, synth)
                             return
         except Exception:
             pass
@@ -132,7 +100,7 @@ class BinaryDownloadWorker(QThread):
         super().__init__()
         self.download_url = download_url
         self.output_path = output_path
-        self.fallback_url = fallback_url or f"https://github.com/{GITHUB_REPO}/releases/latest/download/CustomCalculator.exe"
+        self.fallback_url = fallback_url
 
     def _download_stream(self, url: str) -> bool:
         req = urllib.request.Request(
@@ -182,72 +150,31 @@ class BinaryDownloadWorker(QThread):
 
 def fetch_all_releases() -> List[Dict[str, Any]]:
     """
-    Synchronously fetches all releases from GitHub for the build browser.
-    Falls back to and merges GitHub commits so builds are visible live even
-    before standalone binaries or formal GitHub Releases are tagged.
-    Excludes any license-related commits or releases.
+    Synchronously fetches all releases from GitHub Releases API (/releases).
+    Excludes drafts and license entries, and sorts descending by semantic version.
     """
     releases: List[Dict[str, Any]] = []
-    seen_versions = set()
 
-    # 1. Primary: GitHub Releases
     try:
         req = urllib.request.Request(
-            f"{GITHUB_API_URL}/releases?per_page=30",
+            f"{GITHUB_API_URL}/releases?per_page=100",
             headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
         )
-        with urllib.request.urlopen(req, timeout=4.0) as resp:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if isinstance(data, list):
                 for rel in data:
-                    if is_license_entry(rel):
+                    if is_license_entry(rel) or rel.get("draft", False):
                         continue
-                    tag = rel.get("tag_name", "").lstrip("v")
+                    tag = rel.get("tag_name", "")
                     if tag:
-                        seen_versions.add(tag)
-                    rel["is_commit_build"] = False
-                    releases.append(rel)
+                        rel["is_commit_build"] = False
+                        releases.append(rel)
     except Exception:
         pass
 
-    # 2. Live Commits fallback / supplemental
-    try:
-        req = urllib.request.Request(
-            f"{GITHUB_API_URL}/commits?per_page=30",
-            headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
-        )
-        with urllib.request.urlopen(req, timeout=4.0) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, list):
-                for c in data:
-                    if is_license_entry(c):
-                        continue
-                    msg = c.get("commit", {}).get("message", "")
-                    first_line = msg.splitlines()[0] if msg else ""
-                    m = re.search(r"v?(\d+\.\d+(?:\.\d+)?)", first_line)
-                    tag_ver = m.group(1) if m else ""
-                    sha = c.get("sha", "")[:7]
-
-                    # If this version is already covered by a formal release, skip duplicating
-                    if tag_ver and tag_ver in seen_versions:
-                        continue
-                    if tag_ver:
-                        seen_versions.add(tag_ver)
-
-                    synth_rel = {
-                        "tag_name": f"v{tag_ver}" if tag_ver else f"Commit {sha}",
-                        "name": first_line,
-                        "body": msg,
-                        "published_at": c.get("commit", {}).get("committer", {}).get("date", ""),
-                        "target_commitish": sha,
-                        "html_url": c.get("html_url", ""),
-                        "assets": [],
-                        "is_commit_build": True
-                    }
-                    releases.append(synth_rel)
-    except Exception:
-        pass
-
+    # Sort descending by Semantic Version (latest first, then past releases)
+    releases.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
     return releases
 
 
