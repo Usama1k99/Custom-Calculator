@@ -285,7 +285,10 @@ class DualTierDisplay(QFrame):
     def set_drafting_state(self, expression_trail: str, active_token: str, live_preview: str = ""):
         # If user is entering the second/subsequent operand, display complete formula in ribbon
         if expression_trail:
-            displayed_trail = f"{expression_trail}{active_token}".strip()
+            if active_token:
+                displayed_trail = f"{expression_trail}{active_token}".strip()
+            else:
+                displayed_trail = expression_trail.strip()
         else:
             displayed_trail = ""
 
@@ -296,16 +299,25 @@ class DualTierDisplay(QFrame):
         else:
             self.ghost_preview.setText("")
 
-        val = active_token if active_token else "0"
-        self._update_display_mode(val)
-
-        if self.primary_display.text() != val:
-            self.primary_display.blockSignals(True)
-            self.primary_display.setText(val)
-            self.primary_display.setCursorPosition(len(val))
-            self.primary_display.blockSignals(False)
-
-        self._auto_scale_font(self.primary_display.text())
+        if active_token:
+            val = active_token
+            self._update_display_mode(val)
+            if self.primary_display.text() != val:
+                self.primary_display.blockSignals(True)
+                self.primary_display.setText(val)
+                self.primary_display.setCursorPosition(len(val))
+                self.primary_display.blockSignals(False)
+            self._auto_scale_font(self.primary_display.text())
+        elif not expression_trail:
+            # Clean initial / cleared state
+            val = "0"
+            self._update_display_mode(val)
+            if self.primary_display.text() != val:
+                self.primary_display.blockSignals(True)
+                self.primary_display.setText(val)
+                self.primary_display.setCursorPosition(len(val))
+                self.primary_display.blockSignals(False)
+            self._auto_scale_font(self.primary_display.text())
 
     def set_evaluated_state(self, expression_used: str, final_result: str):
         ribbon_text = expression_used.strip()

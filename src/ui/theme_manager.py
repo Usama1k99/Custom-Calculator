@@ -438,7 +438,6 @@ class ThemeManager:
             border: none;
             padding: 0;
             margin: 0;
-            caret-color: transparent;
             selection-background-color: {t['accent_primary']};
             selection-color: {t['text_accent']};
         }}
@@ -446,7 +445,6 @@ class ThemeManager:
             color: {t['action_danger']};
             font-size: 30px;
             font-weight: 500;
-            caret-color: transparent;
         }}
 
         /* ─── MEMORY BAR (WINDOWS CALC RIBBON) ─────────────────────── */

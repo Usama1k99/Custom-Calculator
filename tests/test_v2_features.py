@@ -217,6 +217,7 @@ class TestV2Features(unittest.TestCase):
         self.assertIsNotNone(dlg.btn_check_updates)
         self.assertIsNotNone(dlg.builds_combo)
         self.assertEqual(dlg.btn_check_updates.text(), "Check for Updates")
+        self.assertIn("v0.2.1", dlg.version_footer_lbl.text())
 
     # ─── 8. DATE CALCULATION MODE INTEGRATION ────────────────────────
     def test_date_mode_switching_and_view(self):
@@ -654,6 +655,99 @@ class TestV2Features(unittest.TestCase):
         g_kp.btn_func.click()
         app.processEvents()
 
+    # ─── 31. OPERATOR TRAILING PREVIEW SUPPRESSION ACROSS MODES ────────
+    def test_operator_trailing_preview_suppression_all_modes(self):
+        # Test Standard Mode: 60 + should NOT preview = 120 or ribbon 60 + 0
+        self.win._switch_mode("Standard", save_config=False)
+        self.win.state.clear_all()
+        app.processEvents()
+
+        self.win.state.input_digit("6")
+        self.win.state.input_digit("0")
+        app.processEvents()
+        self.assertEqual(self.win.display.primary_display.text(), "60")
+
+        # Press '+'
+        self.win.state.input_operator("+")
+        app.processEvents()
+
+        # Ribbon must show '60 +' (never '60 + 0')
+        self.assertEqual(self.win.display.expression_label.text(), "60 +")
+        # Ghost preview must be empty (never '= 120')
+        self.assertEqual(self.win.display.ghost_preview.text(), "")
+        # Primary display retains 60 until next digit
+        self.assertEqual(self.win.display.primary_display.text(), "60")
+
+        # Type '5'
+        self.win.state.input_digit("5")
+        app.processEvents()
+        self.assertEqual(self.win.display.expression_label.text(), "60 + 5")
+        self.assertEqual(self.win.display.ghost_preview.text(), "= 65")
+        self.assertEqual(self.win.display.primary_display.text(), "5")
+
+        # Press '='
+        self.win.state.evaluate()
+        app.processEvents()
+        self.assertEqual(self.win.display.primary_display.text(), "65")
+        self.assertEqual(self.win.display.ghost_preview.text(), "")
+
+        # Test other operators: -, ×, ÷, %
+        for op in ("−", "×", "÷", "%"):
+            self.win.state.clear_all()
+            app.processEvents()
+            self.win.state.input_digit("6")
+            self.win.state.input_digit("0")
+            self.win.state.input_operator(op)
+            app.processEvents()
+            self.assertEqual(self.win.display.ghost_preview.text(), "", f"Operator {op} should have empty preview")
+            self.assertNotIn(" 0", self.win.display.expression_label.text())
+
+        # Test Programmer Mode operators: AND, OR, XOR, mod, <<, >>
+        self.win._switch_mode("Programmer", save_config=False)
+        for prog_op in ("AND", "OR", "XOR", "mod", "<<", ">>"):
+            self.win.state.clear_all()
+            app.processEvents()
+            self.win.state.input_digit("6")
+            self.win.state.input_digit("0")
+            self.win.state.input_operator(prog_op)
+            app.processEvents()
+            self.assertEqual(self.win.display.ghost_preview.text(), "", f"Prog op {prog_op} should have empty preview")
+            self.assertNotIn(" 0", self.win.display.expression_label.text())
+
+        # Test Scientific Mode typing directly in field: "60 +" -> empty, "60 + 5" -> = 65
+        self.win._switch_mode("Scientific", save_config=False)
+        self.win.state.clear_all()
+        app.processEvents()
+        self.win.display.primary_display.setText("60 +")
+        self.win.display.primary_display.textEdited.emit("60 +")
+        app.processEvents()
+        self.assertEqual(self.win.display.ghost_preview.text(), "")
+
+        self.win.display.primary_display.setText("60 + 5")
+        self.win.display.primary_display.textEdited.emit("60 + 5")
+        app.processEvents()
+        self.assertEqual(self.win.display.ghost_preview.text(), "= 65")
+
+        # Incomplete "60 + 5 *" -> empty
+        self.win.display.primary_display.setText("60 + 5 *")
+        self.win.display.primary_display.textEdited.emit("60 + 5 *")
+        app.processEvents()
+        self.assertEqual(self.win.display.ghost_preview.text(), "")
+
+        # Complete "60 + 5 * 2" -> = 70
+        self.win.display.primary_display.setText("60 + 5 * 2")
+        self.win.display.primary_display.textEdited.emit("60 + 5 * 2")
+        app.processEvents()
+        self.assertEqual(self.win.display.ghost_preview.text(), "= 70")
+
+    # ─── 32. TASKBAR APP USER MODEL ID & ICON RESOLUTION ───────────────
+    def test_taskbar_app_user_model_id_and_icon(self):
+        import sys
+        if sys.platform == "win32":
+            import ctypes
+            res = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Usama1k99.CustomCalculator.App.0.2.0")
+            self.assertEqual(res, 0)
+        self.assertFalse(self.win.windowIcon().isNull())
 
 
 if __name__ == "__main__":

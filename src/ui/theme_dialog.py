@@ -33,7 +33,7 @@ from src.core.updater import (
     VersionCheckWorker, fetch_all_releases, BinaryDownloadWorker,
     apply_update_and_restart, is_license_entry
 )
-from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO
+from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO, BUILD_STATUS
 
 
 class ThemeNameDialog(QDialog):
@@ -406,8 +406,15 @@ class ThemeDialog(QDialog):
 
         layout.addWidget(self.tabs, stretch=1)
 
-        # ─── 3. BOTTOM CLOSE BUTTON ──────────────────────────────────
+        # ─── 3. BOTTOM FOOTER WITH CURRENT VERSION & CLOSE BUTTON ───────
         bottom_row = QHBoxLayout()
+        bottom_row.setContentsMargins(4, 0, 4, 0)
+
+        status_suffix = f" ({BUILD_STATUS})" if BUILD_STATUS else ""
+        self.version_footer_lbl = QLabel(f"v{APP_VERSION}{status_suffix}")
+        self.version_footer_lbl.setObjectName("SettingsFooterVersionLbl")
+        bottom_row.addWidget(self.version_footer_lbl)
+
         bottom_row.addStretch()
 
         self.done_btn = QPushButton("Done")
@@ -1125,6 +1132,12 @@ class ThemeDialog(QDialog):
             QCheckBox#BlurEffectCheck::indicator:checked {{
                 background-color: {t['accent_primary']};
                 border-color: {t['accent_primary']};
+            }}
+            QLabel#SettingsFooterVersionLbl {{
+                font-size: 11px;
+                color: {t['text_secondary']};
+                background: transparent;
+                padding-left: 2px;
             }}
             QPushButton#ThemeDoneBtn {{
                 background-color: {t['bg_card']};

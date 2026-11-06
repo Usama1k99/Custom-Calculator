@@ -16,6 +16,14 @@ def main():
     # Install robust crash logging and PyInstaller safe stream handler immediately
     install_crash_handler()
 
+    # Set Windows AppUserModelID so taskbar groups and shows the native app icon
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Usama1k99.CustomCalculator.App.0.2.0")
+        except Exception:
+            pass
+
     # Enable High DPI attribute
     if hasattr(Qt.ApplicationAttribute, "AA_UseHighDpiPixmaps"):
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
@@ -24,10 +32,14 @@ def main():
     app.setApplicationName("Custom-Calculator")
     app.setOrganizationName("Custom-Calculator")
 
-    # Set App-Level Icon
-    icon_path = Path("assets") / "icons" / "app_icon.ico"
+    # Set App-Level Icon (multi-resolution ICO required for Windows Taskbar)
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    icon_path = base_dir / "assets" / "icons" / "app_icon.ico"
+    if not icon_path.exists():
+        icon_path = Path("assets") / "icons" / "app_icon.ico"
     if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
+        app_icon = QIcon(str(icon_path))
+        app.setWindowIcon(app_icon)
 
     window = MainWindow()
     window.show()

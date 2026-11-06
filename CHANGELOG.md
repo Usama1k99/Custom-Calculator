@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.1] - 2026-11-07 (Pre-Release)
+
+### Fixed
+* Fixed operator trailing preview bug across Standard, Scientific, and Programmer modes:
+  * Entering an operator after a number (e.g. `60 +`) no longer synthesizes duplicate operands or shows bogus live previews (`= 120`).
+  * Incomplete drafting expressions ending with any operator (`+`, `-`, `*`, `/`, `×`, `÷`, `−`, `%`, `^`, `mod`, `AND`, `OR`, `XOR`, `NOT`, `<<`, `>>`), unclosed parenthesis, or trailing comma cleanly suppress live ghost previews.
+  * Ribbon text formatting fixed so trailing operator is not concatenated with 0 (`60 +` instead of `60 + 0`).
+  * Primary display retains current operand value until the next digit is typed, matching Windows Calculator ergonomics.
+  * Enhanced backspace to remove trailing operator and restore preceding operand when active token is empty.
+* Fixed Qt Style Sheets warning: removed unsupported `caret-color` property that logged warnings on application startup.
+* Fixed Windows Taskbar icon: registered explicit `AppUserModelID` via `ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID` and prioritized multi-resolution `.ico` via `sys._MEIPASS`.
+
+### Added
+* Settings modal footer: added subtle current version indicator (`v0.2.1 (pre-release)`) adhering to active theme palette.
+
+---
+
 ## [0.2.0] - 2026-11-06 (Alpha Build)
 
 ### Added

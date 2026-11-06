@@ -22,6 +22,21 @@ class AngleMode:
     GRAD = "GRAD"
 
 
+def is_expression_incomplete(expr: str) -> bool:
+    """
+    Checks if an expression ends in an operator, open parenthesis, comma, or incomplete syntax
+    where evaluating a live preview would be meaningless or generate invalid repetitions.
+    """
+    if not expr or not expr.strip():
+        return True
+    s = expr.strip()
+    # Check if ends with binary operator, unary operator waiting for argument, open parenthesis, or comma
+    # Covers +, -, *, /, ×, ÷, −, %, ^, &, |, ~, <<, >>, <, >, <=, >=, ==, !=
+    # and words AND, OR, XOR, NOT, mod, or opening parenthesis (
+    op_pattern = r'([\+\-\*/%&\|\^×÷−~<>=]|<<|>>|\bAND\b|\bOR\b|\bXOR\b|\bNOT\b|\bmod\b|\(|,)\s*$'
+    return bool(re.search(op_pattern, s, flags=re.IGNORECASE))
+
+
 class MathEngine:
     def __init__(self):
         self.angle_mode = AngleMode.DEG
@@ -58,7 +73,7 @@ class MathEngine:
             return rad * 200.0 / math.pi
         return rad
 
-    def sanitize_expression(self, expr: str, mode: str = "Standard") -> str:
+    def sanitize_expression(self, expr: str, mode: str = "Standard", allow_incomplete: bool = True) -> str:
         """
         Cleans and normalizes user input into a valid Python AST string.
         Gracefully repairs unclosed parentheses, removes empty brackets,
@@ -122,9 +137,11 @@ class MathEngine:
         # Replace programmer & scientific mod operator after percentage handling
         s = re.sub(r'\bmod\b', '%', s, flags=re.IGNORECASE)
 
-        # Handle incomplete expressions like "5 +" or "5 *" (Windows Calc behavior: repeat operand)
+        # Handle incomplete expressions like "5 +" or "5 *" (Windows Calc behavior on '=': repeat operand)
         trailing_op_match = re.search(r'([\+\-\*/%&|\^]|<<|>>)\s*$', s)
         if trailing_op_match:
+            if not allow_incomplete:
+                return ""  # Incomplete, cannot evaluate in preview
             op = trailing_op_match.group(1)
             # Find the last valid number preceding the operator
             preceding_num = re.findall(r'\b\d+(?:\.\d+)?\b', s)
@@ -157,7 +174,7 @@ class MathEngine:
 
         return s
 
-    def evaluate(self, expr: str, mode: str = "Standard") -> Tuple[bool, str, Optional[Decimal]]:
+    def evaluate(self, expr: str, mode: str = "Standard", allow_incomplete: bool = True) -> Tuple[bool, str, Optional[Decimal]]:
         """
         Safely evaluates an algebraic expression with exhaustive edge case protection.
         Returns: (success: bool, formatted_result_or_error: str, raw_decimal: Optional[Decimal])
@@ -165,7 +182,12 @@ class MathEngine:
         if not expr or not expr.strip():
             return True, "0", Decimal("0")
 
-        sanitized = self.sanitize_expression(expr, mode=mode)
+        if not allow_incomplete and is_expression_incomplete(expr):
+            return False, "", None
+
+        sanitized = self.sanitize_expression(expr, mode=mode, allow_incomplete=allow_incomplete)
+        if not sanitized:
+            return False, "", None
 
         try:
             tree = ast.parse(sanitized, mode='eval')

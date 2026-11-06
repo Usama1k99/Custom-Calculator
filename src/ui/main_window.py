@@ -11,6 +11,7 @@ Replicates Windows Calculator UI/UX:
 """
 
 from pathlib import Path
+import sys
 from PyQt6.QtCore import Qt, QPoint, QSize, QTimer
 from PyQt6.QtGui import QIcon, QKeyEvent, QMouseEvent, QCursor
 from PyQt6.QtWidgets import (
@@ -70,13 +71,19 @@ class MainWindow(QMainWindow):
         if always_on_top:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
-        # Set Window Icon (Use vector SVG directly; fallback to multi-res ICO)
-        icon_svg = Path("assets") / "icons" / "app_icon.svg"
-        icon_ico = Path("assets") / "icons" / "app_icon.ico"
-        if icon_svg.exists():
-            self.setWindowIcon(QIcon(str(icon_svg)))
-        elif icon_ico.exists():
+        # Set Window Icon (Prefer multi-resolution ICO for native Windows taskbar & alt-tab; fallback to SVG)
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent.parent))
+        icon_ico = base_dir / "assets" / "icons" / "app_icon.ico"
+        if not icon_ico.exists():
+            icon_ico = Path("assets") / "icons" / "app_icon.ico"
+        icon_svg = base_dir / "assets" / "icons" / "app_icon.svg"
+        if not icon_svg.exists():
+            icon_svg = Path("assets") / "icons" / "app_icon.svg"
+
+        if icon_ico.exists():
             self.setWindowIcon(QIcon(str(icon_ico)))
+        elif icon_svg.exists():
+            self.setWindowIcon(QIcon(str(icon_svg)))
 
         # ─── 2. LOGIC INITIALIZATION ─────────────────────────────────
         self.engine = MathEngine()

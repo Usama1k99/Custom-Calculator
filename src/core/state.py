@@ -6,7 +6,7 @@ unary operations, repeated equals chaining, and edge-case sanitization.
 
 from decimal import Decimal
 from typing import Optional, Callable
-from src.core.engine import MathEngine
+from src.core.engine import MathEngine, is_expression_incomplete
 from src.database.history_db import HistoryDB
 from src.core.crash_reporter import record_breadcrumb
 from src.core.input_validator import is_char_allowed, sanitize_leading_zeros
@@ -68,7 +68,7 @@ class CalculatorState:
                 else:
                     self.active_token += "."
             else:
-                if self.active_token == "0":
+                if not self.active_token or self.active_token == "0":
                     self.active_token = char
                 elif self.active_token == "-0":
                     self.active_token = f"-{char}"
@@ -90,6 +90,7 @@ class CalculatorState:
             # Ans chaining: use the previous result as the base
             res_str = self.engine.format_number(self.last_result) if self.last_result is not None else "0"
             self.expression_trail = f"{res_str} {op} "
+            self._last_committed_val = res_str
             self.active_token = ""
             self.is_evaluated = False
             self.last_op_repeat = None
@@ -103,6 +104,7 @@ class CalculatorState:
                         self.expression_trail = " ".join(tokens) + " "
             else:
                 self.expression_trail += f"{self.active_token} {op} "
+                self._last_committed_val = self.active_token
                 self.active_token = ""
 
         self._notify()
@@ -179,6 +181,14 @@ class CalculatorState:
             else:
                 self.active_token = s
             self._notify()
+        elif self.expression_trail:
+            # Active token is empty, remove the trailing operator and restore previous operand
+            tokens = self.expression_trail.strip().split()
+            if tokens:
+                tokens.pop()  # remove operator
+                self.active_token = tokens.pop() if tokens else "0"
+                self.expression_trail = " ".join(tokens) + (" " if tokens else "")
+                self._notify()
 
     def clear_entry(self):
         """
@@ -311,23 +321,26 @@ class CalculatorState:
         live_ghost = ""
         full_expr = f"{self.expression_trail.strip()} {self.active_token.strip()}".strip()
 
+        # If expression is incomplete (e.g. ends with an operator like "60 +" or open parenthesis),
+        # NEVER calculate or show preview!
         if full_expr and not self.is_evaluated and not self.has_error:
-            has_expr_features = (
-                bool(self.expression_trail)
-                or any(ch in full_expr for ch in ("+", "-", "*", "/", "×", "÷", "^", "%", "(", ")"))
-                or any(fn in full_expr.lower() for fn in ("sin", "cos", "tan", "log", "ln", "sqrt", "mod", "fact", "abs", "pi", "e"))
-            )
-            if has_expr_features:
-                try:
-                    success, val, _ = self.engine.evaluate(full_expr, mode=self.mode)
-                    if success and val and val != self.active_token:
-                        live_ghost = val
-                except Exception:
-                    pass
+            if not is_expression_incomplete(full_expr):
+                has_expr_features = (
+                    bool(self.expression_trail)
+                    or any(ch in full_expr for ch in ("+", "-", "*", "/", "×", "÷", "^", "%", "(", ")"))
+                    or any(fn in full_expr.lower() for fn in ("sin", "cos", "tan", "log", "ln", "sqrt", "mod", "fact", "abs", "pi", "e"))
+                )
+                if has_expr_features:
+                    try:
+                        success, val, _ = self.engine.evaluate(full_expr, mode=self.mode, allow_incomplete=False)
+                        if success and val and val != self.active_token:
+                            live_ghost = val
+                    except Exception:
+                        pass
 
         self.on_state_changed(
             is_evaluated=self.is_evaluated,
             expression_trail=self.pinned_expression if self.is_evaluated else self.expression_trail,
-            active_token=self.active_token if self.active_token else "0",
+            active_token=self.active_token,
             live_preview=live_ghost
         )
