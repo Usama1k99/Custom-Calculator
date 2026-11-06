@@ -4,6 +4,7 @@ Provides exact SVG line-art icons and theme-reactive QIcon generation.
 """
 
 from pathlib import Path
+import tempfile
 from typing import Dict
 from PyQt6.QtCore import QByteArray, QSize, Qt
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor
@@ -218,6 +219,29 @@ def get_themed_icon(icon_name: str, color_hex: str, size: int = 18) -> QIcon:
     painter.end()
 
     return QIcon(pixmap)
+
+
+def get_themed_svg_path(icon_name: str, color_hex: str) -> str:
+    """
+    Generates and caches a dynamically tinted SVG vector file on disk, returning
+    an absolute POSIX path (forward slashes) safe for use in Qt stylesheets
+    (QSS `image: url(...)`) across any process working directory or PyInstaller bundle.
+    """
+    clean_hex = color_hex.strip().lstrip("#")
+    filename = f"{icon_name.lower().replace(' ', '_')}_{clean_hex}.svg"
+    cache_dir = Path(tempfile.gettempdir()) / "custom_calc_icons"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target_path = cache_dir / filename
+
+    raw_svg = MODE_SVGS.get(icon_name)
+    if not raw_svg:
+        raw_svg = MODE_SVGS.get("ChevronDown", "")
+
+    hex_val = color_hex if color_hex.startswith("#") else f"#{color_hex}"
+    tinted = raw_svg.replace("currentColor", hex_val)
+    target_path.write_text(tinted, encoding="utf-8")
+
+    return target_path.resolve().as_posix()
 
 
 def dump_all_svgs_to_disk(target_dir: str = "assets/icons/modes"):

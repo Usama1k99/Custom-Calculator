@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.2] - 2026-11-07 (Pre-Release)
+
+### Fixed
+* Fixed Software Update Manager and Live Version Detection (`src/core/updater.py`, `src/ui/theme_dialog.py`):
+  * Resolved the root cause where updates and past builds failed to show up: GitHub Releases was empty (`0 releases`) because no GitHub Release objects existed.
+  * Implemented a dual-tier live fetching engine: falls back to and merges the GitHub Commits API so builds and versions are pulled live in real-time even before formal releases are drafted.
+  * Added semver comparison (`parse_semver`) so newer remote versions or differing build commits are correctly detected as available updates.
+  * Excluded license/initial commits from the version picker per specification.
+  * Added background worker (`BuildsFetchWorker`) in `ThemeDialog` to auto-fetch builds on open without UI stutter.
+  * Provided seamless fallback action: displays "View vX.Y.Z on GitHub" when commit builds lack standalone `.exe` attachments, opening directly in the default browser.
+* Fixed Missing Dropdown Arrow / Chevron in QSS (`src/ui/mode_icons.py`, `src/ui/theme_dialog.py`, `src/ui/theme_manager.py`, `src/ui/graph_options_popover.py`):
+  * Replaced process-cwd-relative stylesheet URLs (`image: url(...)`) with dynamically tinted absolute forward-slash POSIX paths (`get_themed_svg_path`).
+  * Resolves cleanly across any working directory, desktop shortcut launch, and PyInstaller frozen executable environment.
+  * Down-arrow chevrons dynamically adapt to active theme colors (light in dark mode, dark in light mode) in compliance with Rule 9.
+* Fixed Update Notification Integration (`src/ui/update_dialog.py`, `src/ui/main_window.py`):
+  * "Browse Builds..." in update notification dialog now directly navigates to the Settings modal's "Updates & Versions" tab.
+  * Startup version check cleanly detects updates and prompts the user.
+
+---
+
 ## [0.2.1] - 2026-11-07 (Pre-Release)
 
 ### Fixed

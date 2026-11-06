@@ -118,8 +118,11 @@ class UpdatePromptDialog(QDialog):
         exe_asset = next((a for a in assets if a.get("name", "").endswith(".exe")), None)
 
         if not exe_asset:
-            self.update_btn.setText("No binary in release")
-            self.update_btn.setEnabled(False)
+            from PyQt6.QtGui import QDesktopServices
+            from PyQt6.QtCore import QUrl
+            html_url = self.release_info.get("html_url", "https://github.com/Usama1k99/Custom-Calculator")
+            QDesktopServices.openUrl(QUrl(html_url))
+            self.accept()
             return
 
         download_url = exe_asset.get("browser_download_url")
@@ -144,8 +147,12 @@ class UpdatePromptDialog(QDialog):
 
     def _open_build_browser(self):
         self.accept()
-        dlg = BuildBrowserDialog(self.parent())
-        dlg.exec()
+        parent_win = self.parent()
+        if parent_win and hasattr(parent_win, "_open_theme_dialog"):
+            parent_win._open_theme_dialog(initial_tab=1)
+        else:
+            dlg = BuildBrowserDialog(parent_win)
+            dlg.exec()
 
 
 class BuildBrowserDialog(QDialog):

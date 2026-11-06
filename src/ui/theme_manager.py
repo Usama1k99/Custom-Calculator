@@ -341,21 +341,13 @@ class ThemeManager:
         t = self.current_tokens
         bg_window = self._hex_to_rgba(t['bg_base'], 0.65) if blur_enabled else t['bg_base']
 
-        # Ensure dynamically tinted SVGs are written for QSS image: url(...) references
-        try:
-            from src.ui.mode_icons import MODE_SVGS
-            gen_dir = Path("assets/icons/generated")
-            gen_dir.mkdir(parents=True, exist_ok=True)
-            for icon_key, file_name in [
-                ("Date Calculation", "date_picker.svg"),
-                ("ChevronUp", "chevron_up.svg"),
-                ("ChevronDown", "chevron_down.svg")
-            ]:
-                raw_svg = MODE_SVGS.get(icon_key, "")
-                tinted = raw_svg.replace("currentColor", t.get("text_secondary", "#CCCCCC"))
-                (gen_dir / file_name).write_text(tinted, encoding="utf-8")
-        except Exception:
-            pass
+        # Ensure dynamically tinted SVGs are written and absolute posix paths are used in QSS
+        from src.ui.mode_icons import get_themed_svg_path
+        sec_color = t.get("text_secondary", "#CCCCCC")
+        chevron_down_path = get_themed_svg_path("ChevronDown", sec_color)
+        chevron_up_path = get_themed_svg_path("ChevronUp", sec_color)
+        date_picker_path = get_themed_svg_path("Date Calculation", sec_color)
+
         return f"""
         /* ─── ROOT WINDOW & CENTRAL CONTAINER ──────────────────────── */
         QMainWindow {{
@@ -653,7 +645,7 @@ class ThemeManager:
             border-bottom-right-radius: 6px;
         }}
         QComboBox.unitCombo::down-arrow {{
-            image: url(assets/icons/chevron_down.svg);
+            image: url({chevron_down_path});
             width: 12px;
             height: 12px;
         }}
@@ -799,7 +791,7 @@ class ThemeManager:
             background: transparent;
         }}
         QDateEdit[class="dateEdit"]::down-arrow, QDateEdit.dateEdit::down-arrow {{
-            image: url(assets/icons/generated/date_picker.svg);
+            image: url({date_picker_path});
             width: 14px;
             height: 14px;
         }}
@@ -816,7 +808,7 @@ class ThemeManager:
             background-color: {t['bg_card_hover']};
         }}
         QSpinBox[class="dateSpinBox"]::up-arrow, QSpinBox.dateSpinBox::up-arrow {{
-            image: url(assets/icons/generated/chevron_up.svg);
+            image: url({chevron_up_path});
             width: 10px;
             height: 10px;
         }}
@@ -832,7 +824,7 @@ class ThemeManager:
             background-color: {t['bg_card_hover']};
         }}
         QSpinBox[class="dateSpinBox"]::down-arrow, QSpinBox.dateSpinBox::down-arrow {{
-            image: url(assets/icons/generated/chevron_down.svg);
+            image: url({chevron_down_path});
             width: 10px;
             height: 10px;
         }}

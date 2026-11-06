@@ -27,6 +27,7 @@ from src.ui.history_drawer import HistoryDrawer, HistoryConfirmDialog
 from src.database.history_db import HistoryDB
 import tempfile
 import os
+import json
 from src.ui.title_bar import TITLE_BUTTON_STYLES, CustomTitleBar, DialogTitleBar
 from src.ui.native_window import (
     HTTOPLEFT, HTTOPRIGHT, HTBOTTOMLEFT, HTBOTTOMRIGHT,
@@ -217,7 +218,8 @@ class TestV2Features(unittest.TestCase):
         self.assertIsNotNone(dlg.btn_check_updates)
         self.assertIsNotNone(dlg.builds_combo)
         self.assertEqual(dlg.btn_check_updates.text(), "Check for Updates")
-        self.assertIn("v0.2.1", dlg.version_footer_lbl.text())
+        from src.version import APP_VERSION
+        self.assertIn(f"v{APP_VERSION}", dlg.version_footer_lbl.text())
 
     # ─── 8. DATE CALCULATION MODE INTEGRATION ────────────────────────
     def test_date_mode_switching_and_view(self):
@@ -748,6 +750,92 @@ class TestV2Features(unittest.TestCase):
             res = ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Usama1k99.CustomCalculator.App.0.2.0")
             self.assertEqual(res, 0)
         self.assertFalse(self.win.windowIcon().isNull())
+
+    # ─── 33. THEMED SVG PATH ENGINE & FORWARD SLASH POSIX PATHS ────────
+    def test_themed_svg_path_engine(self):
+        from src.ui.mode_icons import get_themed_svg_path
+        from pathlib import Path
+        p1 = get_themed_svg_path("ChevronDown", "#FF0000")
+        self.assertTrue(Path(p1).exists())
+        self.assertIn("/", p1)
+        self.assertNotIn("\\", p1)
+        content = Path(p1).read_text(encoding="utf-8")
+        self.assertIn("#FF0000", content)
+
+        p2 = get_themed_svg_path("ChevronUp", "#00FF00")
+        self.assertTrue(Path(p2).exists())
+        self.assertIn("#00FF00", Path(p2).read_text(encoding="utf-8"))
+
+    # ─── 34. SEMVER PARSING AND COMPARISON LOGIC ───────────────────────
+    def test_semver_parsing_and_comparison(self):
+        from src.core.updater import parse_semver
+        self.assertEqual(parse_semver("v0.2.1"), (0, 2, 1))
+        self.assertEqual(parse_semver("0.2.0"), (0, 2, 0))
+        self.assertEqual(parse_semver("v1.0.0-alpha"), (1, 0, 0))
+        self.assertTrue(parse_semver("v0.2.2") > parse_semver("v0.2.1"))
+        self.assertTrue(parse_semver("0.2.1") > parse_semver("0.2.0"))
+        self.assertFalse(parse_semver("0.2.0") > parse_semver("0.2.1"))
+
+    # ─── 35. LIVE COMMITS FALLBACK AND UPDATER BEHAVIOR ────────────────
+    def test_live_commits_fallback_and_updater(self):
+        from unittest.mock import patch
+        from src.core.updater import fetch_all_releases, VersionCheckWorker
+
+        mock_commits = [
+            {
+                "sha": "abc1234567890",
+                "commit": {
+                    "message": "v0.3.0: Major new feature release\n\nFull details",
+                    "committer": {"date": "2026-11-07T00:00:00Z"}
+                },
+                "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/abc1234"
+            },
+            {
+                "sha": "def5678901234",
+                "commit": {
+                    "message": "Update LICENSE\n\nLicense change",
+                    "committer": {"date": "2026-11-06T00:00:00Z"}
+                },
+                "html_url": "https://github.com/Usama1k99/Custom-Calculator/commit/def5678"
+            }
+        ]
+
+        # Test fetch_all_releases fallback when releases endpoint is empty
+        def mock_urlopen(req, timeout=None):
+            class MockResponse:
+                def __init__(self, data):
+                    self.data = data
+                def read(self):
+                    return json.dumps(self.data).encode("utf-8")
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+
+            if "releases" in req.full_url:
+                return MockResponse([])
+            elif "commits" in req.full_url:
+                return MockResponse(mock_commits)
+            return MockResponse([])
+
+        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
+            releases = fetch_all_releases()
+            self.assertEqual(len(releases), 1)
+            self.assertEqual(releases[0]["tag_name"], "v0.3.0")
+            self.assertEqual(releases[0]["target_commitish"], "abc1234")
+            self.assertTrue(releases[0]["is_commit_build"])
+
+        # Test VersionCheckWorker detects newer version from commits fallback
+        worker = VersionCheckWorker()
+        results = []
+        worker.checkCompleted.connect(lambda avail, info: results.append((avail, info)))
+        with patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
+            worker.run()
+
+        self.assertEqual(len(results), 1)
+        avail, info = results[0]
+        self.assertTrue(avail)
+        self.assertEqual(info["tag_name"], "v0.3.0")
 
 
 if __name__ == "__main__":

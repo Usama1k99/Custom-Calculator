@@ -423,10 +423,10 @@ class MainWindow(QMainWindow):
     def _on_history_expression_selected(self, expr: str):
         self.state.restore_expression(expr)
 
-    def _open_theme_dialog(self):
+    def _open_theme_dialog(self, initial_tab: int = 0):
         if self.sidebar.isVisible():
             self._toggle_sidebar()
-        dlg = ThemeDialog(self.theme_mgr, self)
+        dlg = ThemeDialog(self.theme_mgr, self, initial_tab=initial_tab)
         dlg.themeApplied.connect(self._on_theme_updated)
         dlg.exec()
 

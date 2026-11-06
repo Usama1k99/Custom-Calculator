@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QPushButton, QRadioButton, QButtonGroup, QComboBox
 )
-from src.ui.mode_icons import get_themed_icon
+from src.ui.mode_icons import get_themed_icon, get_themed_svg_path
 
 
 class GraphOptionsPopover(QFrame):
@@ -187,18 +187,9 @@ class GraphOptionsPopover(QFrame):
         layout.addWidget(self.thick_lbl)
 
         self.thick_combo = QComboBox()
+        self.thick_combo.setObjectName("ThickCombo")
         self.thick_combo.addItems(["Thin (1.5px)", "Medium (2.5px)", "Thick (4.0px)"])
         self.thick_combo.setCurrentIndex(1)
-        self.thick_combo.setStyleSheet("""
-            QComboBox {
-                background: rgba(255, 255, 255, 0.08);
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 4px;
-                color: #FFFFFF;
-                font-size: 11px;
-                padding: 4px 8px;
-            }
-        """)
         self.thick_combo.currentIndexChanged.connect(self._on_thickness_changed)
         layout.addWidget(self.thick_combo)
 
@@ -233,11 +224,31 @@ class GraphOptionsPopover(QFrame):
         text_pri = t.get("text_primary", "#FFFFFF")
         text_sec = t.get("text_secondary", "#CCCCCC")
 
+        chevron_down_path = get_themed_svg_path("ChevronDown", text_sec)
         self.setStyleSheet(f"""
             QFrame#GraphOptionsCard {{
                 background-color: {bg_card};
                 border: 1px solid {border_col};
                 border-radius: 8px;
+            }}
+            QComboBox#ThickCombo {{
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid {border_col};
+                border-radius: 4px;
+                color: {text_pri};
+                font-size: 11px;
+                padding: 4px 24px 4px 8px;
+            }}
+            QComboBox#ThickCombo::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 20px;
+                border: none;
+            }}
+            QComboBox#ThickCombo::down-arrow {{
+                image: url({chevron_down_path});
+                width: 10px;
+                height: 10px;
             }}
             QRadioButton {{
                 color: {text_pri};

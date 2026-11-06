@@ -14,8 +14,8 @@ from pathlib import Path
 import json
 import re
 from typing import Dict, Any, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
+from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QFrame, QScrollArea, QWidget, QLineEdit,
@@ -29,8 +29,10 @@ from src.ui.title_bar import DialogTitleBar
 from src.ui.native_window import apply_dialog_rounded_corners
 from src.ui.update_dialog import UpdatePromptDialog
 from src.ui.toggle_switch import ThemeModeToggle
+from src.ui.mode_icons import get_themed_svg_path
+from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
-    VersionCheckWorker, fetch_all_releases, BinaryDownloadWorker,
+    VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
     apply_update_and_restart, is_license_entry
 )
 from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO, BUILD_STATUS
@@ -349,7 +351,7 @@ class ThemeImportDialog(QDialog):
 class ThemeDialog(QDialog):
     themeApplied = pyqtSignal()
 
-    def __init__(self, theme_manager: ThemeManager, parent=None):
+    def __init__(self, theme_manager: ThemeManager, parent=None, initial_tab: int = 0):
         super().__init__(parent)
         self.theme_manager = theme_manager
         self.setObjectName("ThemeDialog")
@@ -358,10 +360,14 @@ class ThemeDialog(QDialog):
         self.temp_tokens = dict(self.theme_manager.current_tokens)
 
         self._check_worker: Optional[VersionCheckWorker] = None
+        self._builds_worker: Optional[BuildsFetchWorker] = None
 
         self._init_ui()
+        if initial_tab > 0 and hasattr(self, "tabs"):
+            self.tabs.setCurrentIndex(initial_tab)
         self._apply_theme_styles()
         self._update_save_btn_visibility()
+        self._load_live_builds()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -371,6 +377,9 @@ class ThemeDialog(QDialog):
         if self._check_worker and self._check_worker.isRunning():
             self._check_worker.terminate()
             self._check_worker.wait(500)
+        if self._builds_worker and self._builds_worker.isRunning():
+            self._builds_worker.terminate()
+            self._builds_worker.wait(500)
         super().closeEvent(event)
 
     def _init_ui(self):
@@ -653,6 +662,42 @@ class ThemeDialog(QDialog):
 
         return tab
 
+    def _load_live_builds(self):
+        """Fetches releases and commits live in the background and populates the build selector."""
+        self._builds_worker = BuildsFetchWorker()
+        self._builds_worker.buildsFetched.connect(self._populate_builds_list)
+        self._builds_worker.start()
+
+    def _populate_builds_list(self, releases: list):
+        self.builds_combo.blockSignals(True)
+        self.builds_combo.clear()
+        found_current = False
+        installed_idx = 0
+
+        for rel in releases:
+            if is_license_entry(rel):
+                continue
+            tag = rel.get("tag_name", "Release")
+            sha = rel.get("target_commitish", "")[:7]
+            is_curr = (tag.lstrip("v") == APP_VERSION) or (sha and sha == BUILD_COMMIT)
+            if is_curr:
+                found_current = True
+                installed_idx = self.builds_combo.count()
+            suffix = " (Installed Current)" if is_curr else ""
+            self.builds_combo.addItem(f"{tag}{suffix}", rel)
+
+        if not found_current:
+            self.builds_combo.insertItem(
+                0,
+                f"v{APP_VERSION} (Installed Current)",
+                {"tag_name": f"v{APP_VERSION}", "body": "Active installation build.", "target_commitish": BUILD_COMMIT}
+            )
+            installed_idx = 0
+
+        self.builds_combo.setCurrentIndex(installed_idx)
+        self.builds_combo.blockSignals(False)
+        self._on_build_selected(self.builds_combo.currentIndex())
+
     def _on_build_selected(self, idx: int):
         data = self.builds_combo.itemData(idx)
         if not data or not isinstance(data, dict):
@@ -660,13 +705,30 @@ class ThemeDialog(QDialog):
         tag = data.get("tag_name", "Release")
         body = data.get("body", "No release notes available.")
         date = data.get("published_at", "")[:10]
-        desc = f"Version: {tag} ({date})\n{body[:140]}..." if date else f"Version: {tag}\n{body[:140]}"
+        sha = data.get("target_commitish", "")[:7]
+        assets = data.get("assets", [])
+        has_binary = any(a.get("name", "").endswith(".exe") for a in assets)
+
+        desc_parts = [f"Version: {tag}"]
+        if sha:
+            desc_parts.append(f"({sha})")
+        if date:
+            desc_parts.append(f"[{date}]")
+        header_line = " ".join(desc_parts)
+        first_line = body.splitlines()[0] if body else ""
+        desc = f"{header_line}\n{first_line[:140]}"
         self.build_details_lbl.setText(desc)
 
         is_different = (tag.lstrip("v") != APP_VERSION)
+        if sha and sha == BUILD_COMMIT:
+            is_different = False
+
         self.btn_install_selected.setVisible(is_different)
         if is_different:
-            self.btn_install_selected.setText(f"Switch to {tag}")
+            if has_binary:
+                self.btn_install_selected.setText(f"Switch to {tag}")
+            else:
+                self.btn_install_selected.setText(f"View {tag} on GitHub")
 
     def _install_selected_build(self):
         data = self.builds_combo.currentData()
@@ -675,7 +737,9 @@ class ThemeDialog(QDialog):
         assets = data.get("assets", [])
         exe_asset = next((a for a in assets if a.get("name", "").endswith(".exe")), None)
         if not exe_asset:
-            self.build_details_lbl.setText("No compiled Windows executable asset found for this release.")
+            html_url = data.get("html_url", f"https://github.com/{GITHUB_REPO}")
+            QDesktopServices.openUrl(QUrl(html_url))
+            self.build_details_lbl.setText(f"Opened {data.get('tag_name')} on GitHub in your default browser.")
             return
 
         download_url = exe_asset.get("browser_download_url")
@@ -979,22 +1043,7 @@ class ThemeDialog(QDialog):
 
         def on_finished(update_available: bool, release_info: dict):
             self.btn_check_updates.setEnabled(True)
-            try:
-                releases = fetch_all_releases()
-                if releases:
-                    self.builds_combo.blockSignals(True)
-                    self.builds_combo.clear()
-                    for rel in releases:
-                        if is_license_entry(rel):
-                            continue
-                        tag = rel.get("tag_name", "Release")
-                        is_curr = (tag.lstrip("v") == APP_VERSION)
-                        suffix = " (Installed)" if is_curr else ""
-                        self.builds_combo.addItem(f"{tag}{suffix}", rel)
-                    self.builds_combo.blockSignals(False)
-                    self._on_build_selected(self.builds_combo.currentIndex())
-            except Exception:
-                pass
+            self._load_live_builds()
 
             if update_available:
                 tag = release_info.get("tag_name", "Latest")
@@ -1008,6 +1057,7 @@ class ThemeDialog(QDialog):
     def _apply_theme_styles(self):
         """Applies active theme colors and tokens to the entire dialog window."""
         t = self.theme_manager.current_tokens
+        chevron_down_path = get_themed_svg_path("ChevronDown", t.get("text_secondary", "#CCCCCC"))
         self.setStyleSheet(f"""
             QDialog#ThemeDialog {{
                 background-color: {t['bg_base']};
@@ -1076,7 +1126,7 @@ class ThemeDialog(QDialog):
                 border: none;
             }}
             QComboBox#ThemePresetCombo::down-arrow, QComboBox#ThemeCustomCombo::down-arrow {{
-                image: url(assets/icons/chevron_down.svg);
+                image: url({chevron_down_path});
                 width: 12px;
                 height: 12px;
             }}
@@ -1208,7 +1258,7 @@ class ThemeDialog(QDialog):
                 border: none;
             }}
             QComboBox#BuildsCombo::down-arrow {{
-                image: url(assets/icons/chevron_down.svg);
+                image: url({chevron_down_path});
                 width: 12px;
                 height: 12px;
             }}
