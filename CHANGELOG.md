@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * In the Version Settings panel, automatically disabled update check and version switching buttons when offline, displaying a clean "Not connected to internet." notice without emojis.
 
 ### Fixed
+* PyInstaller Self-Replacement Child DLL & Working Directory Fix (`src/core/updater.py`):
+  * Stripped `_MEIPASS2` and `_MEIPASS` environment variables from both the Python `subprocess.Popen` caller environment and the child PowerShell execution environment prior to relaunching the replaced executable. This prevents PyInstaller onefile bootloader from falsely assuming child process status and failing with `Failed to load Python DLL ... python312.dll: The specified module could not be found`.
+  * Applied literal PowerShell here-strings (`@'...'@`) for target and destination executable paths to eliminate quote and backslash parsing anomalies.
+  * Explicitly passed `-WorkingDirectory` matching the target executable's directory to `Start-Process`, preventing "invalid or wrong path" errors upon relaunch.
 * Self-Update Detached Process Replacement (`src/core/updater.py`):
   * Replaced the broken `timeout /t 1` command in the update batch script with `ping 127.0.0.1 -n 2 >nul`, preventing Windows CMD from terminating immediately with `ERROR: Input redirection is not supported` when executed in non-interactive/detached shells without stdin.
   * Added a robust 30-attempt retry loop with 1-second delays to wait for Windows to release file locks on the running executable before replacing it, followed by automatic relaunch and cleanup.
