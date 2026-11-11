@@ -215,6 +215,8 @@ def apply_update_and_restart(new_exe_path: str):
     that waits for the active PID to release file handles, replaces the active
     binary with a robust retry loop, relaunches the updated executable,
     and cleans up temporary files.
+    Strips PyInstaller _MEIPASS2 from child environment to prevent 'Failed to load Python DLL'
+    and normalizes paths with explicit working directory to prevent invalid path errors.
     """
     current_exe = sys.executable
 
@@ -224,10 +226,17 @@ def apply_update_and_restart(new_exe_path: str):
         return
 
     pid = os.getpid()
+    cur_native = os.path.normpath(str(current_exe))
+    new_native = os.path.normpath(str(new_exe_path))
+
     ps_content = f"""
 $PidToWait = {pid}
-$NewExe = "{str(new_exe_path).replace(chr(92), '/')}"
-$CurExe = "{str(current_exe).replace(chr(92), '/')}"
+$NewExe = @'
+{new_native}
+'@
+$CurExe = @'
+{cur_native}
+'@
 
 $proc = Get-Process -Id $PidToWait -ErrorAction SilentlyContinue
 if ($proc) {{
@@ -248,7 +257,15 @@ for ($i = 0; $i -lt 30; $i++) {{
 
 if ($copied) {{
     Remove-Item -LiteralPath $NewExe -Force -ErrorAction SilentlyContinue
-    Start-Process -FilePath $CurExe
+
+    # Strip PyInstaller bootstrap environment variables to avoid child load error
+    Remove-Item env:_MEIPASS2 -ErrorAction SilentlyContinue
+    Remove-Item env:_MEIPASS -ErrorAction SilentlyContinue
+    [System.Environment]::SetEnvironmentVariable('_MEIPASS2', $null, 'Process')
+    [System.Environment]::SetEnvironmentVariable('_MEIPASS', $null, 'Process')
+
+    $workDir = [System.IO.Path]::GetDirectoryName($CurExe)
+    Start-Process -FilePath $CurExe -WorkingDirectory $workDir
 }}
 Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 """
@@ -257,6 +274,10 @@ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction Silent
         f.write(ps_content)
 
     CREATE_NO_WINDOW = 0x08000000
+    env = os.environ.copy()
+    env.pop("_MEIPASS2", None)
+    env.pop("_MEIPASS", None)
+
     subprocess.Popen(
         [
             "powershell.exe",
@@ -265,6 +286,7 @@ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction Silent
             "-ExecutionPolicy", "Bypass",
             "-File", str(script_path)
         ],
+        env=env,
         creationflags=CREATE_NO_WINDOW,
         close_fds=True
     )
