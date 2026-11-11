@@ -191,7 +191,7 @@ class CurrencyEngine:
         try:
             req = urllib.request.Request(
                 PRIMARY_API_URL,
-                headers={"User-Agent": "ApexCalculator/1.0"}
+                headers={"User-Agent": "CustomCalculator/1.0"}
             )
             with urllib.request.urlopen(req, timeout=6) as resp:
                 if resp.status == 200:
@@ -215,7 +215,7 @@ class CurrencyEngine:
         try:
             req = urllib.request.Request(
                 FALLBACK_API_URL,
-                headers={"User-Agent": "ApexCalculator/1.0"}
+                headers={"User-Agent": "CustomCalculator/1.0"}
             )
             with urllib.request.urlopen(req, timeout=6) as resp:
                 if resp.status == 200:

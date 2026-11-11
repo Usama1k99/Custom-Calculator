@@ -4,8 +4,8 @@ BUMP THIS VERSION STRING BEFORE EACH GIT PUSH.
 """
 
 APP_NAME = "Custom-Calculator"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 BUILD_STATUS = "release"
-BUILD_COMMIT = "c2995fb"
+BUILD_COMMIT = "07adbbb"
 GITHUB_REPO = "Usama1k99/Custom-Calculator"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"

@@ -1,5 +1,5 @@
 """
-Custom-Calculator (ApexCalc) Entry Point.
+Custom-Calculator Entry Point.
 Initializes High-DPI support, application lifecycle, and main UI.
 """
 

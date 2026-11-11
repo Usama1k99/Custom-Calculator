@@ -1,5 +1,5 @@
 """
-Enterprise-Grade Crash Reporting & Diagnostic Logging Engine for Custom-Calculator (ApexCalc).
+Enterprise-Grade Crash Reporting & Diagnostic Logging Engine for Custom-Calculator.
 Designed specifically to work reliably in frozen PyInstaller EXEs (--noconsole/--windowed)
 as well as standard development environments.
 
@@ -7,7 +7,7 @@ Key Features:
 1. Global exception hooks for MainThread (sys.excepthook) and Worker Threads (threading.excepthook).
 2. PyInstaller safety: prevents crashes caused by sys.stderr / sys.stdout being None in --noconsole mode.
 3. Automatically writes structured, timestamped crash reports to:
-   - Primary: %LOCALAPPDATA%/ApexCalculator/CrashReports
+   - Primary: %LOCALAPPDATA%/CustomCalculator/CrashReports
    - Secondary: <app_dir>/crash_reports (if writable)
 4. Captures exact error type, error message, and full formatted stack traceback.
 5. Captures real-time application context:
@@ -102,8 +102,8 @@ class CrashReporter:
     def get_crash_directories(self) -> List[Path]:
         """
         Returns candidate crash report directories in priority order:
-        1. %LOCALAPPDATA%/ApexCalculator/CrashReports
-        2. %APPDATA%/ApexCalculator/CrashReports
+        1. %LOCALAPPDATA%/CustomCalculator/CrashReports
+        2. %APPDATA%/CustomCalculator/CrashReports
         3. Local <app_dir>/crash_reports
         """
         dirs: List[Path] = []
@@ -111,15 +111,15 @@ class CrashReporter:
         # 1. Windows Local AppData
         local_appdata = os.environ.get("LOCALAPPDATA")
         if local_appdata:
-            dirs.append(Path(local_appdata) / "ApexCalculator" / "CrashReports")
+            dirs.append(Path(local_appdata) / "CustomCalculator" / "CrashReports")
 
         # 2. Windows Roaming AppData
         roaming_appdata = os.environ.get("APPDATA")
         if roaming_appdata:
-            dirs.append(Path(roaming_appdata) / "ApexCalculator" / "CrashReports")
+            dirs.append(Path(roaming_appdata) / "CustomCalculator" / "CrashReports")
 
         # 3. User Home fallback
-        dirs.append(Path.home() / ".apexcalculator" / "crash_reports")
+        dirs.append(Path.home() / ".customcalculator" / "crash_reports")
 
         # 4. Local application directory
         try:
@@ -198,7 +198,7 @@ class CrashReporter:
         mode_specific_text = "\n".join(mode_specific_lines) if mode_specific_lines else "  None"
 
         report = f"""======================================================================
-APEX CALCULATOR ({APP_NAME}) CRASH REPORT
+CUSTOM CALCULATOR ({APP_NAME}) CRASH REPORT
 ======================================================================
 Timestamp (Local):  {now_local.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}
 Timestamp (UTC):    {now_utc.strftime('%Y-%m-%dT%H:%M:%SZ')}
@@ -342,7 +342,7 @@ END OF CRASH REPORT
             if platform.system() == "Windows":
                 import ctypes
                 msg = (
-                    f"Apex Calculator has encountered an unexpected error.\n\n"
+                    f"Custom Calculator has encountered an unexpected error.\n\n"
                     f"Error: {exc_name}: {exc_value}\n"
                     f"Mode: {mode_name}\n"
                     f"Input: {active_token}\n\n"
@@ -351,7 +351,7 @@ END OF CRASH REPORT
                     f"The application will now close."
                 )
                 # MB_OK | MB_ICONERROR | MB_TOPMOST
-                ctypes.windll.user32.MessageBoxW(0, msg, "Apex Calculator - Error", 0x00000010 | 0x00040000)
+                ctypes.windll.user32.MessageBoxW(0, msg, "Custom Calculator - Error", 0x00000010 | 0x00040000)
                 return
         except Exception:
             pass

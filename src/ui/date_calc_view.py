@@ -1,5 +1,5 @@
 """
-Date Calculation View for Custom-Calculator (ApexCalc).
+Date Calculation View for Custom Calculator.
 Replicates Windows Calculator Date Calculation experience:
 - "Difference between dates": calculates years, months, weeks, days, and working business days.
 - "Add or subtract days": adds/subtracts years, months, and days with month-end and leap-year clamping.

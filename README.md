@@ -1,4 +1,4 @@
-# Custom-Calculator (ApexCalc)
+# Custom Calculator
 
 A sleek, lightweight, distraction-free desktop calculator built with native Python. Engineered for high performance with cold startup under 150 milliseconds, minimal memory consumption (<40 MB RAM), session-wise persistent history, dual-tier sticky expression display, and native hardware Numpad support.
 

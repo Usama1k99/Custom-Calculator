@@ -115,7 +115,7 @@ class TestCrashReporter(unittest.TestCase):
             report = self.reporter.build_crash_report(exc_type, exc_value, exc_tb)
 
         # Verify Report Sections
-        self.assertIn("APEX CALCULATOR", report)
+        self.assertIn("CUSTOM CALCULATOR", report)
         self.assertIn("CRASH REPORT", report)
         self.assertIn("1. CRASH SUMMARY", report)
         self.assertIn("Exception Type:     ZeroDivisionError", report)

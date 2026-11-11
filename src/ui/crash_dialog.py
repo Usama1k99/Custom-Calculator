@@ -1,5 +1,5 @@
 """
-Interactive Crash Report & Diagnostic Recovery Dialog for Apex Calculator.
+Interactive Crash Report & Diagnostic Recovery Dialog for Custom Calculator.
 Replicates modern Windows 11 Fluent design with:
 - Custom title bar with translucent red close button
 - Clear summary of the exception, mode, and input context that caused the crash
@@ -37,7 +37,7 @@ class CrashReportDialog(QDialog):
         parent=None
     ):
         super().__init__(parent)
-        self.setWindowTitle("Apex Calculator - Unexpected Error")
+        self.setWindowTitle("Custom Calculator - Unexpected Error")
         self.setFixedSize(560, 480)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint)
         self.setObjectName("CrashReportDialog")
@@ -65,7 +65,7 @@ class CrashReportDialog(QDialog):
         icon_path = Path("assets") / "icons" / "app_icon.svg"
         if not icon_path.exists():
             icon_path = Path("assets") / "icons" / "app_icon.ico"
-        self.title_bar = DialogTitleBar(self, title="Apex Calculator - Error", icon_path=str(icon_path))
+        self.title_bar = DialogTitleBar(self, title="Custom Calculator - Error", icon_path=str(icon_path))
         root.addWidget(self.title_bar)
 
         # 2. Main Content Card
@@ -76,7 +76,7 @@ class CrashReportDialog(QDialog):
         layout.setSpacing(12)
 
         # Header Title
-        title_lbl = QLabel("Apex Calculator encountered an unexpected error.")
+        title_lbl = QLabel("Custom Calculator encountered an unexpected error.")
         title_lbl.setObjectName("CrashTitle")
         layout.addWidget(title_lbl)
 

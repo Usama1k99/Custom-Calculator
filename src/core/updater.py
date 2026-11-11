@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,18 @@ def parse_semver(v_str: str) -> tuple:
     if m:
         return (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
     return (0, 0, 0)
+
+
+def is_connected_to_internet(timeout: float = 1.5) -> bool:
+    """Checks whether the system has active internet access."""
+    for host, port in [("1.1.1.1", 53), ("8.8.8.8", 53), ("github.com", 443)]:
+        try:
+            s = socket.create_connection((host, port), timeout=timeout)
+            s.close()
+            return True
+        except (OSError, socket.timeout):
+            continue
+    return False
 
 
 def parse_release_status(release: Dict[str, Any]) -> str:
@@ -216,6 +229,15 @@ class VersionCheckWorker(QThread):
     checkCompleted = pyqtSignal(bool, dict)  # (update_available, release_info)
 
     def run(self):
+        # Quick internet connectivity verification
+        if not is_connected_to_internet(timeout=1.5):
+            self.checkCompleted.emit(False, {
+                "current_version": APP_VERSION,
+                "current_status": VERSION_STATUS_FUNCTIONAL,
+                "is_offline": True,
+            })
+            return
+
         # Primary check: GitHub Releases API (/releases)
         try:
             req = urllib.request.Request(
@@ -323,6 +345,9 @@ def fetch_all_releases() -> List[Dict[str, Any]]:
     Excludes drafts and license entries, annotates version status,
     and sorts descending by semantic version.
     """
+    if not is_connected_to_internet(timeout=1.5):
+        return []
+
     releases: List[Dict[str, Any]] = []
 
     try:
@@ -355,15 +380,19 @@ class BuildsFetchWorker(QThread):
     buildsFetched = pyqtSignal(list)
 
     def run(self):
+        if not is_connected_to_internet(timeout=1.5):
+            self.buildsFetched.emit([])
+            return
         releases = fetch_all_releases()
         self.buildsFetched.emit(releases)
 
 
 def apply_update_and_restart(new_exe_path: str):
     """
-    Bypasses Windows file locking by spawning a detached batch script
+    Bypasses Windows file locking by spawning a headless PowerShell script
     that waits for the active PID to release file handles, replaces the active
-    binary, and relaunches the updated executable.
+    binary with a robust retry loop, relaunches the updated executable,
+    and cleans up temporary files.
     """
     current_exe = sys.executable
 
@@ -373,34 +402,48 @@ def apply_update_and_restart(new_exe_path: str):
         return
 
     pid = os.getpid()
-    batch_content = f"""@echo off
-set PID={pid}
-:wait_exit
-tasklist /fi "PID eq %PID%" 2>nul | findstr /i "%PID%" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait_exit
-)
+    ps_content = f"""
+$PidToWait = {pid}
+$NewExe = "{str(new_exe_path).replace(chr(92), '/')}"
+$CurExe = "{str(current_exe).replace(chr(92), '/')}"
 
-timeout /t 1 /nobreak >nul
+$proc = Get-Process -Id $PidToWait -ErrorAction SilentlyContinue
+if ($proc) {{
+    $proc.WaitForExit(10000)
+}}
+Start-Sleep -Milliseconds 500
 
-copy /y "{new_exe_path}" "{current_exe}" >nul 2>&1
-if errorlevel 1 (
-    move /y "{new_exe_path}" "{current_exe}" >nul 2>&1
-)
+$copied = $false
+for ($i = 0; $i -lt 30; $i++) {{
+    try {{
+        Copy-Item -LiteralPath $NewExe -Destination $CurExe -Force -ErrorAction Stop
+        $copied = $true
+        break
+    }} catch {{
+        Start-Sleep -Milliseconds 400
+    }}
+}}
 
-start "" "{current_exe}"
-del "%~f0" >nul 2>&1
+if ($copied) {{
+    Remove-Item -LiteralPath $NewExe -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $CurExe
+}}
+Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 """
-    batch_path = Path(tempfile.gettempdir()) / "custom_calc_update.bat"
-    with open(batch_path, "w") as f:
-        f.write(batch_content)
+    script_path = Path(tempfile.gettempdir()) / "custom_calc_update.ps1"
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(ps_content)
 
-    DETACHED_PROCESS = 0x00000008
     CREATE_NO_WINDOW = 0x08000000
     subprocess.Popen(
-        ["cmd.exe", "/c", str(batch_path)],
-        creationflags=DETACHED_PROCESS | CREATE_NO_WINDOW,
+        [
+            "powershell.exe",
+            "-WindowStyle", "Hidden",
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", str(script_path)
+        ],
+        creationflags=CREATE_NO_WINDOW,
         close_fds=True
     )
     sys.exit(0)

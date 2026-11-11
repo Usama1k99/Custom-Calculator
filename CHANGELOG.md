@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.1] - 2026-11-11
+
+### Added
+* Offline Internet Handling (`src/core/updater.py`, `src/ui/main_window.py`, `src/ui/theme_dialog.py`):
+  * Integrated proactive internet connectivity detection (`is_connected_to_internet`).
+  * Suppressed automatic update checks on application startup when offline.
+  * In the Version Settings panel, automatically disabled update check and version switching buttons when offline, displaying a clean "Not connected to internet." notice without emojis.
+
+### Fixed
+* Self-Update Detached Process Replacement (`src/core/updater.py`):
+  * Replaced the broken `timeout /t 1` command in the update batch script with `ping 127.0.0.1 -n 2 >nul`, preventing Windows CMD from terminating immediately with `ERROR: Input redirection is not supported` when executed in non-interactive/detached shells without stdin.
+  * Added a robust 30-attempt retry loop with 1-second delays to wait for Windows to release file locks on the running executable before replacing it, followed by automatic relaunch and cleanup.
+* Pure Greyscale Application Icon (`assets/icons/app_icon.svg`, `assets/icons/app_icon.ico`):
+  * Normalized all gradient stops, borders, and fills in `app_icon.svg` to 100% pure neutral greyscale (`R == G == B`).
+  * Regenerated the multi-resolution Windows executable icon (`app_icon.ico`) with 16, 20, 24, 32, 40, 48, 64, 128, and 256 pixel frames, eliminating rasterization color fringes and blue-tinted zinc artifacts.
+* Legacy Branding Purge:
+  * Completely removed all references to "Apex Calculator", "ApexCalc", and `.apexcalculator` across the repository (`README.md`, `main.py`, `src/core/crash_reporter.py`, `src/core/currency_engine.py`, `src/ui/crash_dialog.py`, `src/ui/date_calc_view.py`, `src/ui/theme_dialog.py`, `tests/test_crash_reporter.py`).
+  * Updated crash report directories to `%LOCALAPPDATA%/CustomCalculator/CrashReports` and `%APPDATA%/CustomCalculator/CrashReports`.
+
 ## [0.6.0] - 2026-11-11 (Official Release)
 
 ### Fixed
