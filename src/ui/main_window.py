@@ -24,7 +24,8 @@ from src.core.engine import MathEngine, AngleMode
 from src.core.state import CalculatorState
 from src.core.updater import (
     VersionCheckWorker, VERSION_STATUS_DEPRECATED,
-    VERSION_STATUS_NOT_RECOMMENDED, VERSION_STATUS_FUNCTIONAL
+    VERSION_STATUS_NOT_RECOMMENDED, VERSION_STATUS_FUNCTIONAL,
+    is_connected_to_internet
 )
 from src.database.history_db import HistoryDB
 from src.ui.theme_manager import ThemeManager
@@ -849,12 +850,14 @@ class MainWindow(QMainWindow):
         return ctx
 
     def _start_version_check(self):
+        if not is_connected_to_internet(timeout=1.5):
+            return
         self.version_worker = VersionCheckWorker(self)
         self.version_worker.checkCompleted.connect(self._on_version_check_result)
         self.version_worker.start()
 
     def _on_version_check_result(self, update_available: bool, release_info: dict):
-        if not update_available:
+        if not update_available or release_info.get("is_offline"):
             return
 
         status = release_info.get("current_status", VERSION_STATUS_FUNCTIONAL)
