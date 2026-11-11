@@ -62,6 +62,7 @@ Thumbs.db
 # Generated Assets & Debug Outputs
 assets/icons/generated/
 crash_reports/
+release_binaries/
 *.log
 *.png
 scratch/
