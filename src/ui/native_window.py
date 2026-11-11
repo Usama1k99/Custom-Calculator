@@ -20,6 +20,7 @@ if sys.platform == "win32":
 
     WM_ACTIVATE = 0x0006
     WM_KILLFOCUS = 0x0008
+    WM_GETMINMAXINFO = 0x0024
     WM_NCCALCSIZE = 0x0083
     WM_NCHITTEST = 0x0084
     WM_NCMOUSEMOVE = 0x00A0
@@ -28,6 +29,14 @@ if sys.platform == "win32":
     WM_NCLBUTTONDBLCLK = 0x00A3
     WM_CAPTURECHANGED = 0x0215
     WM_NCMOUSELEAVE = 0x02A2
+
+    WVR_ALIGNTOP = 0x0010
+    WVR_ALIGNRIGHT = 0x0080
+    WVR_ALIGNLEFT = 0x0020
+    WVR_ALIGNBOTTOM = 0x0040
+    WVR_HREDRAW = 0x0100
+    WVR_VREDRAW = 0x0200
+    WVR_REDRAW = 0x0300
 
     TME_LEAVE = 0x00000002
     TME_NONCLIENT = 0x00000010
@@ -59,6 +68,7 @@ if sys.platform == "win32":
     MONITOR_DEFAULTTONEAREST = 2
 
     DWMWA_WINDOW_CORNER_PREFERENCE = 33
+    DWMWCP_DONOTROUND = 1
     DWMWCP_ROUND = 2
 
     class RECT(ctypes.Structure):
@@ -83,6 +93,25 @@ if sys.platform == "win32":
             ("lppos", ctypes.c_void_p),
         ]
 
+    class MINMAXINFO(ctypes.Structure):
+        _fields_ = [
+            ("ptReserved", wintypes.POINT),
+            ("ptMaxSize", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT),
+            ("ptMinTrackSize", wintypes.POINT),
+            ("ptMaxTrackSize", wintypes.POINT),
+        ]
+
+    class WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.UINT),
+            ("flags", wintypes.UINT),
+            ("showCmd", wintypes.UINT),
+            ("ptMinPosition", wintypes.POINT),
+            ("ptMaxPosition", wintypes.POINT),
+            ("rcNormalPosition", RECT),
+        ]
+
     class MSG(ctypes.Structure):
         _fields_ = [
             ("hwnd", ctypes.c_void_p),
@@ -100,6 +129,19 @@ if sys.platform == "win32":
             ("hwndTrack", wintypes.HWND),
             ("dwHoverTime", wintypes.DWORD),
         ]
+
+    user32.MonitorFromWindow.restype = wintypes.HMONITOR
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.MonitorFromRect.restype = wintypes.HMONITOR
+    user32.MonitorFromRect.argtypes = [ctypes.POINTER(RECT), wintypes.DWORD]
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+    user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+    user32.IsZoomed.restype = wintypes.BOOL
+    user32.IsZoomed.argtypes = [wintypes.HWND]
+    user32.GetWindowPlacement.restype = wintypes.BOOL
+    user32.GetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
+    user32.SetWindowPlacement.restype = wintypes.BOOL
+    user32.SetWindowPlacement.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWPLACEMENT)]
 
     class WinNativeEventFilter(QAbstractNativeEventFilter):
         """Native Windows event filter for frameless Aero Snap and Snap Layouts integration."""
@@ -122,18 +164,26 @@ if sys.platform == "win32":
                 user32.TrackMouseEvent(ctypes.byref(tme))
 
         def nativeEventFilter(self, eventType, message):
-            if eventType == b"windows_generic_MSG" and self.hwnd and self.win:
-                msg = MSG.from_address(int(message))
+            if eventType == b"windows_generic_MSG" and self.hwnd and self.win and message:
+                try:
+                    addr = int(message)
+                except Exception:
+                    return False, 0
+                if not addr:
+                    return False, 0
+                msg = MSG.from_address(addr)
                 if (msg.hwnd or 0) == self.hwnd:
                     if msg.message == WM_NCCALCSIZE:
                         if msg.wParam:
-                            if user32.IsZoomed(ctypes.c_void_p(self.hwnd)):
-                                monitor = user32.MonitorFromWindow(ctypes.c_void_p(self.hwnd), MONITOR_DEFAULTTONEAREST)
+                            if user32.IsZoomed(wintypes.HWND(self.hwnd)):
+                                params = NCCALCSIZE_PARAMS.from_address(msg.lParam)
+                                monitor = user32.MonitorFromRect(ctypes.byref(params.rgrc[0]), MONITOR_DEFAULTTONEAREST)
+                                if not monitor:
+                                    monitor = user32.MonitorFromWindow(wintypes.HWND(self.hwnd), MONITOR_DEFAULTTONEAREST)
                                 if monitor:
                                     mi = MONITORINFO()
                                     mi.cbSize = ctypes.sizeof(MONITORINFO)
                                     if user32.GetMonitorInfoW(monitor, ctypes.byref(mi)):
-                                        params = NCCALCSIZE_PARAMS.from_address(msg.lParam)
                                         params.rgrc[0] = mi.rcWork
                             return True, 0
                     elif msg.message == WM_NCHITTEST:
@@ -143,43 +193,53 @@ if sys.platform == "win32":
                         if res == HTMAXBUTTON:
                             if not getattr(self.win, "_btn_maximize_hovered", False):
                                 self.win._btn_maximize_hovered = True
-                                self.win._set_btn_maximize_hover(True)
+                                if hasattr(self.win, "_set_btn_maximize_hover"):
+                                    self.win._set_btn_maximize_hover(True)
                                 self._track_leave()
                         else:
                             if getattr(self.win, "_btn_maximize_hovered", False):
                                 self.win._btn_maximize_hovered = False
-                                self.win._set_btn_maximize_hover(False)
+                                if hasattr(self.win, "_set_btn_maximize_hover"):
+                                    self.win._set_btn_maximize_hover(False)
                         if res is not None:
                             return True, res
                     elif msg.message == WM_NCMOUSEMOVE:
                         if msg.wParam == HTMAXBUTTON:
                             if not getattr(self.win, "_btn_maximize_hovered", False):
                                 self.win._btn_maximize_hovered = True
-                                self.win._set_btn_maximize_hover(True)
+                                if hasattr(self.win, "_set_btn_maximize_hover"):
+                                    self.win._set_btn_maximize_hover(True)
                                 self._track_leave()
                         else:
                             if getattr(self.win, "_btn_maximize_hovered", False):
                                 self.win._btn_maximize_hovered = False
-                                self.win._set_btn_maximize_hover(False)
+                                if hasattr(self.win, "_set_btn_maximize_hover"):
+                                    self.win._set_btn_maximize_hover(False)
                     elif msg.message == WM_NCMOUSELEAVE:
                         self.win._btn_maximize_hovered = False
                         self.win._btn_maximize_pressed = False
-                        self.win._set_btn_maximize_hover(False)
-                        self.win._set_btn_maximize_pressed(False)
+                        if hasattr(self.win, "_set_btn_maximize_hover"):
+                            self.win._set_btn_maximize_hover(False)
+                        if hasattr(self.win, "_set_btn_maximize_pressed"):
+                            self.win._set_btn_maximize_pressed(False)
                     elif msg.message in (WM_KILLFOCUS, WM_CAPTURECHANGED, WM_ACTIVATE):
                         if getattr(self.win, "_btn_maximize_pressed", False) or getattr(self.win, "_btn_maximize_hovered", False):
                             self.win._btn_maximize_hovered = False
                             self.win._btn_maximize_pressed = False
-                            self.win._set_btn_maximize_hover(False)
-                            self.win._set_btn_maximize_pressed(False)
+                            if hasattr(self.win, "_set_btn_maximize_hover"):
+                                self.win._set_btn_maximize_hover(False)
+                            if hasattr(self.win, "_set_btn_maximize_pressed"):
+                                self.win._set_btn_maximize_pressed(False)
                     elif msg.message == WM_NCLBUTTONDOWN and msg.wParam == HTMAXBUTTON:
                         self.win._btn_maximize_pressed = True
-                        self.win._set_btn_maximize_pressed(True)
+                        if hasattr(self.win, "_set_btn_maximize_pressed"):
+                            self.win._set_btn_maximize_pressed(True)
                         return True, 0
                     elif msg.message == WM_NCLBUTTONUP:
                         was_pressed = getattr(self.win, "_btn_maximize_pressed", False)
                         self.win._btn_maximize_pressed = False
-                        self.win._set_btn_maximize_pressed(False)
+                        if hasattr(self.win, "_set_btn_maximize_pressed"):
+                            self.win._set_btn_maximize_pressed(False)
                         if was_pressed and msg.wParam == HTMAXBUTTON:
                             self.win._toggle_maximize()
                             return True, 0
@@ -196,6 +256,23 @@ def is_windows_11() -> bool:
         return sys.getwindowsversion().build >= 22000
     except Exception:
         return False
+
+
+def set_window_corner_preference(hwnd: int, is_maximized: bool) -> None:
+    """Sets Windows 11 window corner preference: square when maximized, rounded when restored."""
+    if sys.platform != "win32" or not is_windows_11():
+        return
+    try:
+        pref = DWMWCP_DONOTROUND if is_maximized else DWMWCP_ROUND
+        val = ctypes.c_int(pref)
+        dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(hwnd),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(val),
+            ctypes.sizeof(val)
+        )
+    except Exception:
+        pass
 
 
 def apply_native_window_frame(window: QWidget) -> None:

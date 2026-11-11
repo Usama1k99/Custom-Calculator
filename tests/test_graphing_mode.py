@@ -234,6 +234,20 @@ class TestGraphingView(unittest.TestCase):
         self.view._toggle_kgf_panel()
         self.assertFalse(self.view.kgf_card.isVisible())
 
+    def test_function_input_click_and_focus(self):
+        from PyQt6.QtTest import QTest
+        row = self.view.function_rows[0]
+        self.view.activateWindow()
+        QApplication.processEvents()
+        # Simulate user clicking directly into the equation line edit
+        QTest.mouseClick(row.expr_input, Qt.MouseButton.LeftButton)
+        QApplication.processEvents()
+        self.assertTrue(row.property("is_active"))
+        # Verify text typing works without triggering sipBadCatcherResult or any TypeError
+        row.expr_input.clear()
+        QTest.keyClicks(row.expr_input, "x^3 - 2x")
+        self.assertEqual(row.expr_input.text(), "x^3 - 2x")
+
 
 class TestMainWindowGraphingIntegration(unittest.TestCase):
     """Integration tests verifying Graphing mode within MainWindow."""

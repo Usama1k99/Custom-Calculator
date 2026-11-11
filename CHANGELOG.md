@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-11-11 (Official Release)
+
+### Fixed
+* Window Maximization & Aero Snap Layout (`src/ui/main_window.py`, `src/ui/theme_manager.py`, `src/ui/native_window.py`):
+  * Adopted the proven Enveil architectural pattern for frameless windows on Windows 11: removed `WA_TranslucentBackground` from the top-level window and styled `QMainWindow` with solid `{bg_window}` palette background to prevent DirectComposition visual swapchain freeze on maximize.
+  * Replaced broken DirectComposition/DWM composition backdrop overrides with clean OS-level window opacity (`setWindowOpacity`), eliminating transparent void borders, frozen top-left thumbnails, and click-through artifacts across all calculator and graphing modes.
+  * Clamped `params.rgrc[0] = mi.rcWork` in `WM_NCCALCSIZE` to ensure zero border spillover across multi-monitor setups.
+* Multi-Monitor Boundary Clamping (`src/ui/native_window.py`):
+  * Configured explicit 64-bit ctypes `c_void_p` parameter and return types for `HMONITOR` and `HWND` to prevent pointer truncation in multi-monitor coordinate lookups.
+  * Replaced window-handle queries with `MonitorFromRect` on proposed coordinates in `WM_NCCALCSIZE`, properly handling negative virtual coordinates on secondary displays and clamping strictly to `mi.rcWork` with zero monitor leakage.
+* Dynamic Resizing State Integrity (`src/ui/main_window.py`):
+  * Guarded `_toggle_history`, mode switching, and always-on-top against calling `self.resize()` while maximized.
+  * Used in-place Win32 `SetWindowPlacement` to update `rcNormalPosition` when the history drawer is closed while maximized, ensuring subsequent restore returns cleanly to the 380px compact width.
+  * Replaced window recreation in `_toggle_always_on_top` with in-place Win32 `SetWindowPos` Z-order toggling.
+  * Guarded `resizeEvent` and `closeEvent` against writing maximized dimensions into `config.json`.
+* Vector SVG Window Controls (`src/ui/title_bar.py`, `src/ui/mode_icons.py`):
+  * Replaced Unicode font glyphs with clean, dynamically tinted vector SVGs (`WindowMinimize`, `WindowMaximize`, `WindowRestore`, `WindowClose`) that automatically adapt to light and dark theme palettes.
+* Sign Inversion & Ghost Preview Synchronization (`src/core/state.py`, `src/ui/display_widget.py`):
+  * Fixed `+/-` (negate) button behavior so operands in binary calculations wrap into clean `negate(...)` representations.
+  * Standalone negative decimals (e.g. `-0.95`) suppress phantom positive ghost previews (`= 0.95`).
+  * Pressing `=` preserves negative numbers without inverting signs.
+* Unary Operator Chaining (`src/core/state.py`):
+  * Sequential unary operations (`1/x`, `sqr`, `sqrt`) now chain cleanly in the ribbon representation (e.g. `10 -> 1/(10) -> sqr(1/(10)) -> √(sqr(1/(10)))`).
+* Graphing Mode Function Input Crash (`src/ui/graphing_view.py`):
+  * Replaced lambda monkey-patch on `mousePressEvent` with `FunctionInputLineEdit` subclass emitting custom Qt signals, eliminating `TypeError: invalid argument to sipBadCatcherResult()`.
+
+### Added
+* Release Status Marking System (`src/core/updater.py`, `src/ui/update_dialog.py`):
+  * Added version status labeling (`deprecated`, `not_recommended`, `functional`). Deprecated builds update immediately without prompts; Not Recommended builds warn the user with highlighted alerts; Functional builds offer standard update notifications.
+* Greyscale Application Logo & Multi-Resolution ICO (`assets/icons/app_icon.svg`, `assets/icons/app_icon.ico`):
+  * Redesigned calculator logo into clean greyscale with transparent empty areas, vertical rectangular proportions, and lighter outer border.
+* Adversarial Multi-Monitor & Geometry Test Suites (`tests/`):
+  * Added automated test suites (`test_challenger_m4_adversarial.py`, `test_challenger_m4_empirical_stress.py`, `test_adversarial_window_geometry.py`) validating layout integrity across all 18 calculator and converter modes (259 tests passing).
+
+---
+
 ## [0.3.0] - 2026-11-07 (Official Release)
 
 ### Added

@@ -93,6 +93,9 @@ class MathEngine:
         s = s.replace("−", "-")
         s = s.replace("—", "-")
         s = s.replace("^", "**")
+        s = s.replace("³√", "cbrt")
+        s = s.replace("²√", "sqrt")
+        s = s.replace("√", "sqrt")
 
         # Replace programmer & scientific logical operators before AST parsing
         s = re.sub(r'\bAND\b', '&', s, flags=re.IGNORECASE)
@@ -435,30 +438,41 @@ class MathEngine:
             if val == 0:
                 raise ZeroDivisionError("Cannot divide by zero")
             return Decimal(str(1.0 / val))
+        elif name == "negate":
+            return -Decimal(str(args[0]))
         else:
             raise NameError(f"Unknown function: {name}")
 
     def format_number(self, val: Decimal) -> str:
         """
         Formats a Decimal into a clean, human-readable string with proper digit grouping.
+        Preserves signs correctly for negative fractional decimals (e.g. -0.95).
         """
+        is_negative = (val < 0) or (str(val).startswith("-") and val != 0)
+        abs_val = abs(val)
+
         if self.scientific_notation:
-            return f"{float(val):.6e}".replace("+0", "+").replace("-0", "-")
+            res = f"{float(abs_val):.6e}".replace("+0", "+").replace("-0", "-")
+            return f"-{res}" if is_negative and res != "0" else res
 
-        if val == val.to_integral():
-            int_val = int(val)
-            return f"{int_val:,}"
+        if abs_val == abs_val.to_integral():
+            int_val = int(abs_val)
+            res = f"{int_val:,}"
+            return f"-{res}" if is_negative and res != "0" else res
 
-        f = float(val)
-        if (0 < abs(f) < 1e-7) or abs(f) >= 1e16:
-            return f"{f:.8e}".replace("+0", "+").replace("-0", "-")
+        f = float(abs_val)
+        if (0 < f < 1e-7) or f >= 1e16:
+            res = f"{f:.8e}".replace("+0", "+").replace("-0", "-")
+            return f"-{res}" if is_negative and res != "0" else res
 
-        normalized = val.normalize()
+        normalized = abs_val.normalize()
         s = f"{normalized:f}"
         if "." in s:
             whole, frac = s.split(".")
             whole_int = int(whole)
             if len(frac) > 10:
                 frac = frac[:10].rstrip("0")
-            return f"{whole_int:,}.{frac}" if frac else f"{whole_int:,}"
-        return f"{int(s):,}"
+            res = f"{whole_int:,}.{frac}" if frac else f"{whole_int:,}"
+        else:
+            res = f"{int(s):,}"
+        return f"-{res}" if is_negative and res != "0" else res

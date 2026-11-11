@@ -143,7 +143,8 @@ class NavigationSidebar(QFrame):
 
         # ─── SECTION 3: FOOTER SETTINGS WITH SUBTLE DIVIDER ─────────
         sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShape(QFrame.Shape.NoFrame)
+        sep.setFixedHeight(1)
         sep.setObjectName("SidebarSettingsDivider")
         layout.addWidget(sep)
 

@@ -82,6 +82,25 @@ class TestDateCalculationEngine(unittest.TestCase):
         self.assertEqual(work, 1)
         self.assertEqual(wknd, 2)
 
+    def test_year_10000_boundary_no_crash(self):
+        # Test exact crash report scenario: 1900-01-01 to 9999-12-30
+        d1 = date(1900, 1, 1)
+        d2 = date(9999, 12, 30)
+        res = calculate_date_difference(d1, d2)
+        self.assertFalse(res.is_same_date)
+        self.assertGreater(res.years, 8000)
+        self.assertGreater(res.total_days, 2900000)
+        self.assertGreater(res.working_days, 2000000)
+
+    def test_add_years_and_months_bounds(self):
+        d_max = date(9999, 12, 1)
+        self.assertEqual(add_years(d_max, 5), date(9999, 12, 31))
+        self.assertEqual(add_months(d_max, 2), date(9999, 12, 31))
+
+        d_min = date(1, 1, 15)
+        self.assertEqual(add_years(d_min, -5), date(1, 1, 1))
+        self.assertEqual(add_months(d_min, -2), date(1, 1, 1))
+
 
 if __name__ == "__main__":
     unittest.main()

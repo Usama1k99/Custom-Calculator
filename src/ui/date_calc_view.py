@@ -255,36 +255,45 @@ class DateCalcView(QFrame):
             self._recompute_addsub()
 
     def _recompute_diff(self):
-        q1 = self.from_date_edit.date()
-        q2 = self.to_date_edit.date()
-        d1 = date(q1.year(), q1.month(), q1.day())
-        d2 = date(q2.year(), q2.month(), q2.day())
+        try:
+            q1 = self.from_date_edit.date()
+            q2 = self.to_date_edit.date()
+            d1 = date(q1.year(), q1.month(), q1.day())
+            d2 = date(q2.year(), q2.month(), q2.day())
 
-        res = calculate_date_difference(d1, d2)
-        self.diff_headline.setText(res.formatted_summary)
-        self.diff_total_days.setText(res.total_days_summary)
-        self.diff_business.setText(res.business_summary)
+            res = calculate_date_difference(d1, d2)
+            self.diff_headline.setText(res.formatted_summary)
+            self.diff_total_days.setText(res.total_days_summary)
+            self.diff_business.setText(res.business_summary)
+        except Exception as e:
+            self.diff_headline.setText("Date calculation out of range")
+            self.diff_total_days.setText("Cannot calculate outside supported range")
+            self.diff_business.setText(str(e))
 
     def _recompute_addsub(self):
-        q1 = self.addsub_from_edit.date()
-        start = date(q1.year(), q1.month(), q1.day())
-        is_add = self.radio_add.isChecked()
-        y = self.spin_years.value()
-        m = self.spin_months.value()
-        d = self.spin_days.value()
+        try:
+            q1 = self.addsub_from_edit.date()
+            start = date(q1.year(), q1.month(), q1.day())
+            is_add = self.radio_add.isChecked()
+            y = self.spin_years.value()
+            m = self.spin_months.value()
+            d = self.spin_days.value()
 
-        target = add_subtract_duration(start, y, m, d, add=is_add)
-        q_target = QDate(target.year, target.month, target.day)
-        
-        self.addsub_headline.setText(q_target.toString("dddd, MMMM d, yyyy"))
-        
-        # Subtitle: e.g. "Today" or "In 45 days" / "45 days ago"
-        diff_res = calculate_date_difference(start, target)
-        if diff_res.is_same_date:
-            sub = "Same as start date"
-        elif is_add:
-            sub = f"In {diff_res.total_days} days"
-        else:
-            sub = f"{diff_res.total_days} days earlier"
-        self.addsub_sub.setText(sub)
+            target = add_subtract_duration(start, y, m, d, add=is_add)
+            q_target = QDate(target.year, target.month, target.day)
+            
+            self.addsub_headline.setText(q_target.toString("dddd, MMMM d, yyyy"))
+            
+            # Subtitle: e.g. "Today" or "In 45 days" / "45 days ago"
+            diff_res = calculate_date_difference(start, target)
+            if diff_res.is_same_date:
+                sub = "Same as start date"
+            elif is_add:
+                sub = f"In {diff_res.total_days} days"
+            else:
+                sub = f"{diff_res.total_days} days earlier"
+            self.addsub_sub.setText(sub)
+        except Exception as e:
+            self.addsub_headline.setText("Date out of range")
+            self.addsub_sub.setText(str(e))
 

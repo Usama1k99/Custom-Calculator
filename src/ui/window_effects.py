@@ -38,6 +38,7 @@ class WINCOMPATTRDATA(Structure):
 
 # Win32 Constants
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_MICA_EFFECT = 1029
 DWMWA_SYSTEMBACKDROP_TYPE = 38
 
 DWMSBT_AUTO = 0
@@ -48,66 +49,166 @@ DWMSBT_TABBEDWINDOW = 4     # Mica Alt
 
 WCA_ACCENT_POLICY = 19
 ACCENT_DISABLED = 0
+ACCENT_ENABLE_GRADIENT = 1
+ACCENT_ENABLE_TRANSPARENTGRADIENT = 2
 ACCENT_ENABLE_BLURBEHIND = 3
 ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
 
 
-def apply_window_blur(hwnd: int, dark_mode: bool = True, acrylic: bool = False) -> bool:
+def _hex_to_abgr(hex_str: Optional[str], alpha: int = 0x66) -> int:
+    """Converts a hex color like '#272822' to a 32-bit integer in ABGR format."""
+    if hex_str:
+        clean = hex_str.strip().lstrip("#")
+        if len(clean) == 6:
+            try:
+                r = int(clean[0:2], 16)
+                g = int(clean[2:4], 16)
+                b = int(clean[4:6], 16)
+                return (alpha << 24) | (b << 16) | (g << 8) | r
+            except Exception:
+                pass
+    return (alpha << 24) | 0x202020
+
+
+def apply_window_blur(
+    hwnd: int,
+    dark_mode: bool = True,
+    acrylic: bool = True,
+    tint_hex: Optional[str] = None,
+    blur_intensity: str = "medium",
+    is_maximized: bool = False
+) -> bool:
     """
-    Applies native hardware glass blur effect (Windows 11 Mica/Acrylic or Windows 10 Acrylic).
-    Extends DWM frame across client area so blur is visible beneath semi-transparent Qt background.
+    Applies native hardware glass blur effect across Windows 11 & Windows 10.
+    1. Extends DWM frame across client area so backdrop is visible beneath translucent Qt canvas.
+    2. Windows 11 22H2+ (Build >= 22621): Sets DWMWA_SYSTEMBACKDROP_TYPE (Acrylic / Mica).
+    3. Windows 11 21H2 (Build 22000..22620): Sets DWMWA_MICA_EFFECT fallback.
+    4. Windows 10 & 11: Applies AccentPolicy (ACCENT_ENABLE_ACRYLICBLURBEHIND) via SetWindowCompositionAttribute
+       so real-time translucent frosted glass renders across client area.
+    blur_intensity can be 'subtle', 'medium' (default, slightly reduced blurriness), or 'strong'.
     """
     if sys.platform != "win32":
         return False
 
+    success = False
     try:
         ver = sys.getwindowsversion()
         dwm = ctypes.windll.dwmapi
+        user32 = ctypes.windll.user32
 
         # ─── 1. EXTEND DWM FRAME INTO ENTIRE CLIENT AREA ──────────────
         margins = MARGINS(-1, -1, -1, -1)
         dwm.DwmExtendFrameIntoClientArea(c_void_p(hwnd), byref(margins))
 
-        # ─── 2. WINDOWS 11 (Build >= 22000) ──────────────────────────
+        # ─── 2. WINDOWS 11 DWM BACKDROP ───────────────────────────────
+        backdrop_applied = False
         if ver.build >= 22000:
-            # Dark / Light mode preference
             dark_flag = c_int(1 if dark_mode else 0)
-            dwm.DwmSetWindowAttribute(c_void_p(hwnd), DWMWA_USE_IMMERSIVE_DARK_MODE, byref(dark_flag), sizeof(dark_flag))
+            dwm.DwmSetWindowAttribute(
+                c_void_p(hwnd), DWMWA_USE_IMMERSIVE_DARK_MODE,
+                byref(dark_flag), sizeof(dark_flag)
+            )
 
-            # Backdrop Type: 2 = Mica (default Windows 11 style), 3 = Acrylic blur
-            # If acrylic is requested, try Acrylic (3) first; fallback to Mica (2)
-            primary_type = DWMSBT_TRANSIENTWINDOW if acrylic else DWMSBT_MAINWINDOW
-            fallback_type = DWMSBT_MAINWINDOW if acrylic else DWMSBT_TRANSIENTWINDOW
+            if ver.build >= 22621:
+                # Windows 11 22H2+: DWMSBT_TRANSIENTWINDOW (3) for Acrylic, DWMSBT_MAINWINDOW (2) for Mica
+                if blur_intensity == "subtle":
+                    primary_type = DWMSBT_TABBEDWINDOW
+                    fallback_type = DWMSBT_MAINWINDOW
+                elif blur_intensity == "strong":
+                    primary_type = DWMSBT_TRANSIENTWINDOW
+                    fallback_type = DWMSBT_TABBEDWINDOW
+                else:  # medium
+                    primary_type = DWMSBT_TRANSIENTWINDOW
+                    fallback_type = DWMSBT_MAINWINDOW
 
-            backdrop = c_int(primary_type)
-            res = dwm.DwmSetWindowAttribute(c_void_p(hwnd), DWMWA_SYSTEMBACKDROP_TYPE, byref(backdrop), sizeof(backdrop))
-            if res != 0:
-                backdrop = c_int(fallback_type)
-                res = dwm.DwmSetWindowAttribute(c_void_p(hwnd), DWMWA_SYSTEMBACKDROP_TYPE, byref(backdrop), sizeof(backdrop))
-            return res == 0
+                backdrop = c_int(primary_type)
+                res = dwm.DwmSetWindowAttribute(
+                    c_void_p(hwnd), DWMWA_SYSTEMBACKDROP_TYPE,
+                    byref(backdrop), sizeof(backdrop)
+                )
+                if res != 0:
+                    backdrop = c_int(fallback_type)
+                    res = dwm.DwmSetWindowAttribute(
+                        c_void_p(hwnd), DWMWA_SYSTEMBACKDROP_TYPE,
+                        byref(backdrop), sizeof(backdrop)
+                    )
+                if res == 0:
+                    backdrop_applied = True
+                    success = True
+            elif ver.build >= 22000:
+                # Windows 11 21H2 Mica fallback
+                true_val = c_int(1)
+                res = dwm.DwmSetWindowAttribute(
+                    c_void_p(hwnd), DWMWA_MICA_EFFECT,
+                    byref(true_val), sizeof(true_val)
+                )
+                if res == 0:
+                    success = True
 
-        # ─── 3. WINDOWS 10 (Build >= 17134) ──────────────────────────
-        elif ver.build >= 17134:
-            user32 = ctypes.windll.user32
+        # ─── 3. WINDOWS 10 & 11 ACCENT POLICY ACRYLIC BLUR ───────────
+        # On Windows 11 Build >= 22621 where DWMWA_SYSTEMBACKDROP_TYPE succeeds, do NOT call legacy
+        # SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND), which attaches an un-scalable
+        # DirectComposition visual layer that freezes/clips the client viewport upon maximization.
+        # Only call it on Windows 10 (Build 17134..22000) or if backdrop failed.
+        if ver.build >= 17134 and (not backdrop_applied or ver.build < 22621):
             accent = ACCENT_POLICY()
             accent.AccentState = ACCENT_ENABLE_ACRYLICBLURBEHIND
-            accent.AccentFlags = 0x20 | 0x40 | 0x80 | 0x100
+            # Decreased blurriness/tint: things behind window are ever so slightly more visible
+            if blur_intensity == "strong":
+                alpha = 0x66 if dark_mode else 0x77
+            else:  # balanced medium with decreased blurriness
+                alpha = 0x2A if dark_mode else 0x36
 
-            # ABGR format gradient color tint
-            accent.GradientColor = 0x99202020 if dark_mode else 0x99F5F5F5
+            # When maximized, omit drop shadow & borders to prevent bleeding onto secondary monitors
+            if is_maximized:
+                accent.AccentFlags = 0
+            else:
+                accent.AccentFlags = 0x20 | 0x40 | 0x80 | 0x100  # Standard drop shadow & border
+
+            # Compute ABGR tint color
+            if tint_hex:
+                accent.GradientColor = _hex_to_abgr(tint_hex, alpha=alpha)
+            else:
+                accent.GradientColor = (alpha << 24) | (0x202020 if dark_mode else 0xF5F5F5)
 
             data = WINCOMPATTRDATA()
             data.Attribute = WCA_ACCENT_POLICY
             data.Data = ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p)
             data.SizeOfData = sizeof(accent)
 
-            user32.SetWindowCompositionAttribute(c_void_p(hwnd), byref(data))
-            return True
+            res = user32.SetWindowCompositionAttribute(c_void_p(hwnd), byref(data))
+            if res:
+                success = True
+
+        # ─── 4. FORCE DWM IMMEDIATE FRAME RECOMPOSITION ───────────────
+        # Forces DWM to immediately redraw composition buffer and sample desktop
+        # backdrop without requiring a window move or minimize/maximize cycle.
+        if user32.IsWindow(c_void_p(hwnd)):
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            SWP_NOACTIVATE = 0x0010
+            SWP_FRAMECHANGED = 0x0020
+            user32.SetWindowPos(
+                c_void_p(hwnd),
+                c_void_p(0), 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+            )
+            RDW_INVALIDATE = 0x0001
+            RDW_UPDATENOW = 0x0100
+            RDW_ALLCHILDREN = 0x0080
+            RDW_FRAME = 0x0400
+            user32.RedrawWindow(
+                c_void_p(hwnd),
+                c_void_p(0),
+                c_void_p(0),
+                RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME
+            )
 
     except Exception:
         pass
 
-    return False
+    return success
 
 
 def remove_window_blur(hwnd: int) -> bool:
@@ -118,13 +219,22 @@ def remove_window_blur(hwnd: int) -> bool:
     try:
         ver = sys.getwindowsversion()
         dwm = ctypes.windll.dwmapi
+        user32 = ctypes.windll.user32
 
-        if ver.build >= 22000:
+        if ver.build >= 22621:
             none_type = c_int(DWMSBT_NONE)
-            dwm.DwmSetWindowAttribute(c_void_p(hwnd), DWMWA_SYSTEMBACKDROP_TYPE, byref(none_type), sizeof(none_type))
-            return True
-        elif ver.build >= 17134:
-            user32 = ctypes.windll.user32
+            dwm.DwmSetWindowAttribute(
+                c_void_p(hwnd), DWMWA_SYSTEMBACKDROP_TYPE,
+                byref(none_type), sizeof(none_type)
+            )
+        elif ver.build >= 22000:
+            false_val = c_int(0)
+            dwm.DwmSetWindowAttribute(
+                c_void_p(hwnd), DWMWA_MICA_EFFECT,
+                byref(false_val), sizeof(false_val)
+            )
+
+        if ver.build >= 17134:
             accent = ACCENT_POLICY()
             accent.AccentState = ACCENT_DISABLED
             data = WINCOMPATTRDATA()
@@ -132,8 +242,76 @@ def remove_window_blur(hwnd: int) -> bool:
             data.Data = ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p)
             data.SizeOfData = sizeof(accent)
             user32.SetWindowCompositionAttribute(c_void_p(hwnd), byref(data))
-            return True
+
+        # Force DWM to immediately update frame to opaque solid
+        if user32.IsWindow(c_void_p(hwnd)):
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOZORDER = 0x0004
+            SWP_FRAMECHANGED = 0x0020
+            user32.SetWindowPos(
+                c_void_p(hwnd),
+                c_void_p(0), 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED
+            )
+            RDW_INVALIDATE = 0x0001
+            RDW_UPDATENOW = 0x0100
+            RDW_ALLCHILDREN = 0x0080
+            RDW_FRAME = 0x0400
+            user32.RedrawWindow(
+                c_void_p(hwnd),
+                c_void_p(0),
+                c_void_p(0),
+                RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME
+            )
+
+        return True
     except Exception:
         pass
 
     return False
+
+
+def refresh_window_frame(hwnd: int) -> bool:
+    """
+    Refreshes DWM frame extension, triggers WM_NCCALCSIZE via SetWindowPos SWP_FRAMECHANGED,
+    and forces immediate window frame recomposition across the entire client viewport.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        dwm = ctypes.windll.dwmapi
+        user32 = ctypes.windll.user32
+        if not user32.IsWindow(c_void_p(hwnd)):
+            return False
+
+        # 1. Re-extend frame into client area
+        margins = MARGINS(-1, -1, -1, -1)
+        dwm.DwmExtendFrameIntoClientArea(c_void_p(hwnd), byref(margins))
+
+        # 2. Trigger frame change
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        SWP_NOACTIVATE = 0x0010
+        SWP_FRAMECHANGED = 0x0020
+        user32.SetWindowPos(
+            c_void_p(hwnd),
+            c_void_p(0), 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED
+        )
+
+        # 3. Force window and children redraw
+        RDW_INVALIDATE = 0x0001
+        RDW_UPDATENOW = 0x0100
+        RDW_ALLCHILDREN = 0x0080
+        RDW_FRAME = 0x0400
+        user32.RedrawWindow(
+            c_void_p(hwnd),
+            c_void_p(0),
+            c_void_p(0),
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN | RDW_FRAME
+        )
+        return True
+    except Exception:
+        return False

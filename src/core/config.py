@@ -19,15 +19,31 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "always_on_top": False,
     "history_open": False,
     "window_width": 360,
-    "window_height": 560
+    "window_height": 560,
+    "blur_enabled": True,
+    "window_transparency": 65,
+    "blur_intensity": "medium"
 }
 
 
 class ConfigManager:
+    _instances: Dict[str, "ConfigManager"] = {}
+
+    def __new__(cls, config_path: str = "data/config.json"):
+        resolved = str(Path(config_path).resolve())
+        if resolved not in cls._instances:
+            inst = super().__new__(cls)
+            inst._initialized = False
+            cls._instances[resolved] = inst
+        return cls._instances[resolved]
+
     def __init__(self, config_path: str = "data/config.json"):
+        if getattr(self, "_initialized", False):
+            return
         self.config_path = Path(config_path)
         self.config = dict(DEFAULT_CONFIG)
         self.load()
+        self._initialized = True
 
     def load(self):
         if self.config_path.exists():
@@ -38,6 +54,10 @@ class ConfigManager:
                         self.config.update(loaded)
             except Exception:
                 pass
+
+    def reload(self):
+        self.config = dict(DEFAULT_CONFIG)
+        self.load()
 
     def save(self):
         try:

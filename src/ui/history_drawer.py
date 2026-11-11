@@ -114,6 +114,7 @@ class HistoryDrawer(QFrame):
         super().__init__(parent)
         self.db = db
         self.setObjectName("HistoryDrawer")
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedWidth(290)
         self._current_text_color = "#AAAAAA"
         self._init_ui()
@@ -155,6 +156,7 @@ class HistoryDrawer(QFrame):
         self.scroll_area.setObjectName("HistoryScroll")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.viewport().setAutoFillBackground(False)
 
         self.cards_container = QWidget()
         self.cards_container.setObjectName("HistoryScrollContainer")

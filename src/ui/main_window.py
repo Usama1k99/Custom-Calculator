@@ -12,16 +12,20 @@ Replicates Windows Calculator UI/UX:
 
 from pathlib import Path
 import sys
-from PyQt6.QtCore import Qt, QPoint, QSize, QTimer
+from PyQt6.QtCore import Qt, QPoint, QSize, QTimer, QEvent
 from PyQt6.QtGui import QIcon, QKeyEvent, QMouseEvent, QCursor
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QFrame, QLabel, QPushButton, QStackedWidget, QApplication
+    QFrame, QLabel, QPushButton, QStackedWidget, QApplication,
+    QSizePolicy
 )
 from src.core.config import ConfigManager
 from src.core.engine import MathEngine, AngleMode
 from src.core.state import CalculatorState
-from src.core.updater import VersionCheckWorker
+from src.core.updater import (
+    VersionCheckWorker, VERSION_STATUS_DEPRECATED,
+    VERSION_STATUS_NOT_RECOMMENDED, VERSION_STATUS_FUNCTIONAL
+)
 from src.database.history_db import HistoryDB
 from src.ui.theme_manager import ThemeManager
 from src.ui.title_bar import CustomTitleBar
@@ -40,7 +44,7 @@ from src.ui.date_calc_view import DateCalcView
 from src.ui.graphing_view import GraphingView
 from src.ui.history_drawer import HistoryDrawer
 from src.ui.theme_dialog import ThemeDialog
-from src.ui.update_dialog import UpdatePromptDialog
+from src.ui.update_dialog import UpdatePromptDialog, DeprecatedUpdateDialog
 from src.ui.mode_icons import get_themed_icon
 from src.core.crash_reporter import (
     register_context_provider, unregister_context_provider, record_breadcrumb
@@ -54,7 +58,6 @@ class MainWindow(QMainWindow):
 
         # ─── 1. FRAMELESS WINDOW & BLUR GLASS SETUP ──────────────────
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._history_auto_expanded_delta = 0
 
         # Load Configuration
@@ -103,6 +106,8 @@ class MainWindow(QMainWindow):
         # Master root container holding TitleBar + Central Body
         self.root_container = QWidget(self)
         self.root_container.setObjectName("CentralWidget")
+        self.root_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.root_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCentralWidget(self.root_container)
 
         self.master_layout = QVBoxLayout(self.root_container)
@@ -118,6 +123,7 @@ class MainWindow(QMainWindow):
 
         # 2. Main Content Widget (Calculator + Overlays)
         self.content_widget = QWidget()
+        self.content_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.master_layout.addWidget(self.content_widget, stretch=1)
 
         # Content Horizontal Layout: Main Area (left) + History Drawer (right)
@@ -127,6 +133,7 @@ class MainWindow(QMainWindow):
 
         # Center Calculator Container
         self.center_container = QWidget()
+        self.center_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         center_layout = QVBoxLayout(self.center_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
@@ -171,9 +178,11 @@ class MainWindow(QMainWindow):
 
         # ─── STACKED VIEWS (CALCULATOR, CONVERTER, PLACEHOLDERS) ────
         self.stack = QStackedWidget()
+        self.stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Page 0: Calculator Keypad & Display
         self.calc_page = QWidget()
+        self.calc_page.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         calc_page_layout = QVBoxLayout(self.calc_page)
         calc_page_layout.setContentsMargins(0, 0, 0, 0)
         calc_page_layout.setSpacing(0)
@@ -331,6 +340,7 @@ class MainWindow(QMainWindow):
             self.history_btn.setVisible(False)
             if self.history_drawer.isVisible():
                 self.history_drawer.setVisible(False)
+                self._history_auto_expanded_delta = 0
         elif mode == "Graphing":
             self.stack.setCurrentIndex(3)
             self.display.setVisible(False)
@@ -338,6 +348,7 @@ class MainWindow(QMainWindow):
             self.history_btn.setVisible(False)
             if self.history_drawer.isVisible():
                 self.history_drawer.setVisible(False)
+                self._history_auto_expanded_delta = 0
         else:
             # 12 Unit Converters
             self.stack.setCurrentIndex(1)
@@ -347,6 +358,7 @@ class MainWindow(QMainWindow):
             self.history_btn.setVisible(False)
             if self.history_drawer.isVisible():
                 self.history_drawer.setVisible(False)
+                self._history_auto_expanded_delta = 0
 
         if save_config:
             self.config.set("mode", mode)
@@ -364,7 +376,15 @@ class MainWindow(QMainWindow):
         h_w = self.history_drawer.width() if h_open else 0
         total_min_w = base_min_w + h_w
         self.setMinimumWidth(total_min_w)
-        if self.width() < total_min_w:
+        is_max = self.isMaximized()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                is_max = is_max or bool(ctypes.windll.user32.IsZoomed(ctypes.c_void_p(hwnd)))
+            except Exception:
+                pass
+        if not is_max and self.width() < total_min_w:
             self.resize(total_min_w, self.height())
 
     def set_radix(self, radix: str):
@@ -384,41 +404,98 @@ class MainWindow(QMainWindow):
             "Graphing": 460,
         }
         mode_min_w = calc_min_widths.get(self.state.mode, 340)
-        h_w = self.history_drawer.width()
+        h_w = self.history_drawer.width() or 290
+        is_max = self.isMaximized()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                is_max = is_max or bool(ctypes.windll.user32.IsZoomed(ctypes.c_void_p(hwnd)))
+            except Exception:
+                pass
 
         if is_visible:
-            # Check if there is already more than enough width
-            if self.width() < mode_min_w + h_w:
-                delta = (mode_min_w + h_w) - self.width()
-                new_x = max(0, self.x() - delta)
-                new_w = self.width() + delta
-                self.setGeometry(new_x, self.y(), new_w, self.height())
-                self._history_auto_expanded_delta = delta
+            # Check if there is already more than enough width (only resize if NOT maximized)
+            if not is_max:
+                if self.width() < mode_min_w + h_w:
+                    delta = (mode_min_w + h_w) - self.width()
+                    new_w = self.width() + delta
+                    self.setMinimumWidth(mode_min_w + h_w)
+                    self.resize(new_w, self.height())
+                    self._history_auto_expanded_delta = delta
+                else:
+                    self.setMinimumWidth(mode_min_w + h_w)
+                    self._history_auto_expanded_delta = 0
             else:
+                self.setMinimumWidth(mode_min_w + h_w)
                 self._history_auto_expanded_delta = 0
 
-            self.setMinimumWidth(mode_min_w + h_w)
             self.history_drawer.setVisible(True)
             self.history_drawer.refresh_history()
         else:
             self.history_drawer.setVisible(False)
-            if getattr(self, "_history_auto_expanded_delta", 0) > 0:
-                delta = self._history_auto_expanded_delta
-                new_x = self.x() + delta
-                new_w = max(mode_min_w, self.width() - delta)
-                self.setGeometry(new_x, self.y(), new_w, self.height())
-                self._history_auto_expanded_delta = 0
+            # CRITICAL: setMinimumWidth BEFORE resize so Qt does not clamp new_w to (mode_min_w + h_w)
             self.setMinimumWidth(mode_min_w)
+
+            delta = getattr(self, "_history_auto_expanded_delta", 0)
+            if not is_max:
+                if delta > 0:
+                    new_w = max(mode_min_w, self.width() - delta)
+                    self.resize(new_w, self.height())
+            else:
+                # If closed while maximized, adjust Win32 rcNormalPosition so restored state shrinks back
+                if delta > 0 and sys.platform == "win32":
+                    try:
+                        from src.ui.native_window import WINDOWPLACEMENT
+                        import ctypes
+                        hwnd = int(self.winId())
+                        wp = WINDOWPLACEMENT()
+                        wp.length = ctypes.sizeof(WINDOWPLACEMENT)
+                        if ctypes.windll.user32.GetWindowPlacement(ctypes.c_void_p(hwnd), ctypes.byref(wp)):
+                            wp.rcNormalPosition.right = max(
+                                wp.rcNormalPosition.left + mode_min_w,
+                                wp.rcNormalPosition.right - delta
+                            )
+                            ctypes.windll.user32.SetWindowPlacement(ctypes.c_void_p(hwnd), ctypes.byref(wp))
+                    except Exception:
+                        pass
+            self._history_auto_expanded_delta = 0
 
         self.config.set("history_open", is_visible)
 
     def _toggle_always_on_top(self):
         is_pinned = self.pin_btn.isChecked()
         self.config.set("always_on_top", is_pinned)
+
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                HWND_TOPMOST = -1
+                HWND_NOTOPMOST = -2
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_NOACTIVATE = 0x0010
+                res = ctypes.windll.user32.SetWindowPos(
+                    ctypes.c_void_p(hwnd),
+                    ctypes.c_void_p(HWND_TOPMOST if is_pinned else HWND_NOTOPMOST),
+                    0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+                )
+                if res:
+                    return
+            except Exception:
+                pass
+
+        # Non-Win32 fallback
+        is_max = self.isMaximized()
         pos = self.pos()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, is_pinned)
-        self.show()
-        self.move(pos)
+        if is_max:
+            self.showMaximized()
+        else:
+            self.show()
+            self.move(pos)
 
     def _on_history_expression_selected(self, expr: str):
         self.state.restore_expression(expr)
@@ -426,17 +503,19 @@ class MainWindow(QMainWindow):
     def _open_theme_dialog(self, initial_tab: int = 0):
         if self.sidebar.isVisible():
             self._toggle_sidebar()
-        dlg = ThemeDialog(self.theme_mgr, self, initial_tab=initial_tab)
+        dlg = ThemeDialog(self.theme_mgr, config=self.config, parent=self, initial_tab=initial_tab)
         dlg.themeApplied.connect(self._on_theme_updated)
         dlg.exec()
 
     def _on_theme_updated(self):
         self._apply_theme()
-        self.config.set("theme_id", self.theme_mgr.current_theme_id)
 
     def _apply_theme(self):
         blur_enabled = self.config.get("blur_enabled", True)
-        qss = self.theme_mgr.generate_qss(blur_enabled=blur_enabled)
+        window_transparency = self.config.get("window_transparency", 60)
+        blur_intensity = self.config.get("blur_intensity", "medium")
+
+        qss = self.theme_mgr.generate_qss(blur_enabled=blur_enabled, window_transparency=window_transparency)
         self.setStyleSheet(qss)
         tokens = self.theme_mgr.current_tokens
         # Dynamically recolor vector icons (Backspace, Navigation modes & converters)
@@ -453,13 +532,26 @@ class MainWindow(QMainWindow):
             self.history_drawer.update_theme_icons(text_color)
         if hasattr(self, "graphing_page"):
             self.graphing_page.set_theme_tokens(tokens)
+        if hasattr(self, "title_bar") and hasattr(self.title_bar, "update_theme_icons"):
+            self.title_bar.update_theme_icons(text_color)
 
-        # Apply Windows 11 Mica / Acrylic blur effect
-        is_dark = tokens.get("category", "dark") == "dark"
+        # Apply clean window transparency (Enveil pattern)
+        self._apply_window_opacity()
+        self.update()
+
+    def _apply_window_opacity(self):
+        """Applies true window transparency matching Enveil pattern without broken DWM backdrop overrides."""
+        blur_enabled = self.config.get("blur_enabled", self.config.get("blur_effect", True))
         if blur_enabled:
-            apply_window_blur(int(self.winId()), dark_mode=is_dark, acrylic=False)
+            trans_pct = max(0, min(100, int(self.config.get("window_transparency", 65))))
+            effective_trans = (trans_pct / 100.0) * 0.20
+            tokens = getattr(self.theme_mgr, "current_tokens", {})
+            is_dark = tokens.get("category", "dark") == "dark"
+            min_opacity = 0.70 if is_dark else 0.75
+            opacity = max(min_opacity, min(1.0, 1.0 - effective_trans))
+            self.setWindowOpacity(opacity)
         else:
-            remove_window_blur(int(self.winId()))
+            self.setWindowOpacity(1.0)
 
     def _on_angle_mode_toggled(self, new_mode: str):
         self.engine.set_angle_mode(new_mode)
@@ -614,10 +706,64 @@ class MainWindow(QMainWindow):
         else:
             super().keyPressEvent(event)
 
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.isMinimized():
+                return
+
+            is_max = self.isMaximized()
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    hwnd = int(self.winId())
+                    is_max = is_max or bool(ctypes.windll.user32.IsZoomed(ctypes.c_void_p(hwnd)))
+                except Exception:
+                    pass
+
+            if hasattr(self, "title_bar"):
+                if hasattr(self.title_bar, "update_maximize_state"):
+                    self.title_bar.update_maximize_state(is_max)
+                else:
+                    self.title_bar.btn_maximize.setToolTip("Restore" if is_max else "Maximize")
+            if hasattr(self, "master_layout"):
+                self.master_layout.setContentsMargins(0, 0, 0, 0)
+
+            # Synchronize native frame and styling
+            if sys.platform == "win32":
+                try:
+                    hwnd = int(self.winId())
+                    from src.ui.native_window import set_window_corner_preference
+                    set_window_corner_preference(hwnd, is_max)
+                except Exception:
+                    pass
+
+            if hasattr(self, "root_container") and self.root_container:
+                # Toggle root_container corner rounding (0px when maximized, 8px when restored)
+                tokens = getattr(self.theme_mgr, "current_tokens", {})
+                bg_window = tokens.get("bg_base", "#202020")
+                if is_max:
+                    self.root_container.setStyleSheet(f"QWidget#CentralWidget {{ background-color: {bg_window}; border-radius: 0px; border: none; }}")
+                else:
+                    self.root_container.setStyleSheet("")
+                self.root_container.update()
+            self.update()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.config.set("window_width", self.width(), auto_save=False)
-        self.config.set("window_height", self.height(), auto_save=False)
+        w = self.width()
+        h = self.height()
+        is_max = self.isMaximized()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                is_max = is_max or bool(ctypes.windll.user32.IsZoomed(ctypes.c_void_p(hwnd)))
+            except Exception:
+                pass
+        if not is_max:
+            self.config.set("window_width", w, auto_save=False)
+            self.config.set("window_height", h, auto_save=False)
         # Update flyout overlay geometry if visible
         if hasattr(self, "sidebar") and self.sidebar.isVisible():
             cw = self.content_widget.width()
@@ -625,11 +771,26 @@ class MainWindow(QMainWindow):
             self.scrim.setGeometry(0, 0, cw, ch)
             self.sidebar.setGeometry(0, 0, min(260, int(cw * 0.85)), ch)
 
+    def _force_layout_update(self):
+        """Compatibility stub; Qt layouts update natively without geometry overrides."""
+        self.update()
+
     def closeEvent(self, event):
         record_breadcrumb("Lifecycle", "MainWindow closeEvent triggered")
         unregister_context_provider(self._get_crash_context)
-        self.config.set("window_width", self.width(), auto_save=False)
-        self.config.set("window_height", self.height(), auto_save=True)
+        is_max = self.isMaximized()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hwnd = int(self.winId())
+                is_max = is_max or bool(ctypes.windll.user32.IsZoomed(ctypes.c_void_p(hwnd)))
+            except Exception:
+                pass
+        if not is_max:
+            self.config.set("window_width", self.width(), auto_save=False)
+            self.config.set("window_height", self.height(), auto_save=True)
+        else:
+            self.config.save()
         if hasattr(self, "version_worker") and self.version_worker.isRunning():
             self.version_worker.terminate()
             self.version_worker.wait()
@@ -693,8 +854,21 @@ class MainWindow(QMainWindow):
         self.version_worker.start()
 
     def _on_version_check_result(self, update_available: bool, release_info: dict):
-        if update_available:
-            dlg = UpdatePromptDialog(release_info, self)
+        if not update_available:
+            return
+
+        status = release_info.get("current_status", VERSION_STATUS_FUNCTIONAL)
+        if status == VERSION_STATUS_DEPRECATED:
+            # Deprecated: directly show notice and update without prompt
+            dlg = DeprecatedUpdateDialog(release_info, self)
+            dlg.exec()
+        elif status == VERSION_STATUS_NOT_RECOMMENDED:
+            # Not Recommended: inform user with highlighted warning that updating is highly recommended
+            dlg = UpdatePromptDialog(release_info, mode=VERSION_STATUS_NOT_RECOMMENDED, parent=self)
+            dlg.exec()
+        else:
+            # Functional: standard prompt for newer release
+            dlg = UpdatePromptDialog(release_info, mode=VERSION_STATUS_FUNCTIONAL, parent=self)
             dlg.exec()
 
     # ─── WIN32 NATIVE FRAMELESS & AERO SNAP INTEGRATION ─────────────
@@ -738,9 +912,10 @@ class MainWindow(QMainWindow):
         h = self.height()
         B = self._RESIZE_MARGIN
         C = self._CORNER_MARGIN
+        is_max = self.isMaximized()
 
-        # 1. Edge & Corner resizing (only when not maximized)
-        if not self.isMaximized():
+        # 1. Edge & Corner resizing (ONLY when NOT maximized)
+        if not is_max:
             if (ly < C) and (lx < C):
                 return HTTOPLEFT
             if (ly < C) and (lx >= w - C):
@@ -754,7 +929,9 @@ class MainWindow(QMainWindow):
                 if hasattr(self, "btn_maximize") and self.btn_maximize.isVisible():
                     p_max = self.btn_maximize.mapFromGlobal(QPoint(global_x, global_y))
                     if self.btn_maximize.rect().contains(p_max):
-                        return HTMAXBUTTON
+                        if getattr(self, "_native_event_filter", None) is not None:
+                            return HTMAXBUTTON
+                        return HTCLIENT
                 if hasattr(self, "btn_close") and self.btn_close.isVisible():
                     p_close = self.btn_close.mapFromGlobal(QPoint(global_x, global_y))
                     if self.btn_close.rect().contains(p_close):
@@ -771,18 +948,19 @@ class MainWindow(QMainWindow):
             if lx >= w - B:
                 return HTRIGHT
 
-        # 2. Title bar hit-testing (for Aero Snap, Snap Layouts flyout, and controls)
+        # 2. Title bar hit-testing (for Aero Snap, window controls, and dragging)
         if hasattr(self, "title_bar") and self.title_bar.isVisible():
             tb_rect = self.title_bar.rect()
             tb_pt = self.title_bar.mapFromGlobal(QPoint(global_x, global_y))
             if tb_rect.contains(tb_pt):
-                # Maximize button -> HTMAXBUTTON enables Windows 11 Snap Layouts flyout on hover
+                # Maximize button -> HTMAXBUTTON when native filter is active (enabling Win11 Snap Layouts), else HTCLIENT
                 if hasattr(self, "btn_maximize") and self.btn_maximize.isVisible():
                     p_max = self.btn_maximize.mapFromGlobal(QPoint(global_x, global_y))
                     if self.btn_maximize.rect().contains(p_max):
-                        return HTMAXBUTTON
+                        if getattr(self, "_native_event_filter", None) is not None:
+                            return HTMAXBUTTON
+                        return HTCLIENT
 
-                # Minimize and Close buttons -> HTCLIENT so Qt processes hover highlights & clicks
                 if hasattr(self, "btn_minimize") and self.btn_minimize.isVisible():
                     p_min = self.btn_minimize.mapFromGlobal(QPoint(global_x, global_y))
                     if self.btn_minimize.rect().contains(p_min):

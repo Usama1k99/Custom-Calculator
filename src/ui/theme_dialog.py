@@ -15,26 +15,27 @@ import json
 import re
 import tempfile
 from typing import Dict, Any, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl
-from PyQt6.QtGui import QColor, QDesktopServices
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QPoint
+from PyQt6.QtGui import QColor, QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QFrame, QScrollArea, QWidget, QLineEdit,
-    QTabWidget, QFileDialog, QCheckBox, QPlainTextEdit,
-    QApplication
+    QTabWidget, QFileDialog, QPlainTextEdit,
+    QApplication, QSlider, QSizeGrip
 )
 from src.core.config import ConfigManager
 from src.ui.theme_manager import ThemeManager, BUILTIN_THEMES
 from src.ui.color_picker import IDEColorPicker
 from src.ui.title_bar import DialogTitleBar
 from src.ui.native_window import apply_dialog_rounded_corners
-from src.ui.update_dialog import UpdatePromptDialog
-from src.ui.toggle_switch import ThemeModeToggle
+from src.ui.update_dialog import UpdatePromptDialog, DeprecatedUpdateDialog
+from src.ui.toggle_switch import ThemeModeToggle, BlurEffectToggle
 from src.ui.mode_icons import get_themed_svg_path
 from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
     VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
-    apply_update_and_restart, is_license_entry, get_release_download_url, parse_semver
+    apply_update_and_restart, is_license_entry, get_release_download_url, parse_semver,
+    VERSION_STATUS_FUNCTIONAL, VERSION_STATUS_NOT_RECOMMENDED, VERSION_STATUS_DEPRECATED
 )
 
 
@@ -351,13 +352,27 @@ class ThemeImportDialog(QDialog):
 class ThemeDialog(QDialog):
     themeApplied = pyqtSignal()
 
-    def __init__(self, theme_manager: ThemeManager, parent=None, initial_tab: int = 0):
+    def __init__(self, theme_manager: ThemeManager, parent=None, config: Optional[ConfigManager] = None, initial_tab: int = 0):
         super().__init__(parent)
         self.theme_manager = theme_manager
+        if config is not None:
+            self.config = config
+        elif parent is not None and hasattr(parent, "config") and isinstance(parent.config, ConfigManager):
+            self.config = parent.config
+        else:
+            self.config = ConfigManager()
         self.setObjectName("ThemeDialog")
-        self.setFixedSize(430, 560)
+        self.resize(740, 560)
+        self.setMinimumSize(620, 480)
+        self.setMouseTracking(True)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.temp_tokens = dict(self.theme_manager.current_tokens)
+
+        # Snapshot initial values to allow clean revert on reject
+        self._initial_blur_enabled = self.config.get("blur_enabled", True)
+        self._initial_blur_intensity = self.config.get("blur_intensity", "medium")
+        self._initial_transparency = int(self.config.get("window_transparency", 60))
+        self._initial_theme_id = self.theme_manager.current_theme_id
 
         self._check_worker: Optional[VersionCheckWorker] = None
         self._builds_worker: Optional[BuildsFetchWorker] = None
@@ -382,6 +397,49 @@ class ThemeDialog(QDialog):
             self._builds_worker.wait(500)
         super().closeEvent(event)
 
+    def _get_resize_edge(self, pos: QPoint):
+        margin = 6
+        rect = self.rect()
+        on_left = pos.x() <= margin
+        on_right = pos.x() >= rect.width() - margin
+        on_top = pos.y() <= margin
+        on_bottom = pos.y() >= rect.height() - margin
+
+        if on_top and on_left:
+            return Qt.Edge.TopEdge | Qt.Edge.LeftEdge, Qt.CursorShape.SizeFDiagCursor
+        elif on_top and on_right:
+            return Qt.Edge.TopEdge | Qt.Edge.RightEdge, Qt.CursorShape.SizeBDiagCursor
+        elif on_bottom and on_left:
+            return Qt.Edge.BottomEdge | Qt.Edge.LeftEdge, Qt.CursorShape.SizeBDiagCursor
+        elif on_bottom and on_right:
+            return Qt.Edge.BottomEdge | Qt.Edge.RightEdge, Qt.CursorShape.SizeFDiagCursor
+        elif on_left:
+            return Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor
+        elif on_right:
+            return Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor
+        elif on_bottom:
+            return Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor
+        elif on_top:
+            return Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor
+        return None, Qt.CursorShape.ArrowCursor
+
+    def mouseMoveEvent(self, event):
+        if not event.buttons():
+            _, cursor = self._get_resize_edge(event.position().toPoint())
+            self.setCursor(cursor)
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            edge, _ = self._get_resize_edge(event.position().toPoint())
+            if edge is not None:
+                wh = self.windowHandle()
+                if wh and hasattr(wh, "startSystemResize"):
+                    wh.startSystemResize(edge)
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
     def _init_ui(self):
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -397,8 +455,9 @@ class ThemeDialog(QDialog):
         # Content container
         content_widget = QWidget(self)
         content_widget.setObjectName("ThemeDialogContent")
+        content_widget.setMouseTracking(True)
         layout = QVBoxLayout(content_widget)
-        layout.setContentsMargins(14, 10, 14, 14)
+        layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(10)
 
         # ─── 2. TABBED SETTINGS VIEW ─────────────────────────────────
@@ -417,10 +476,10 @@ class ThemeDialog(QDialog):
 
         # ─── 3. BOTTOM FOOTER WITH CURRENT VERSION & CLOSE BUTTON ───────
         bottom_row = QHBoxLayout()
-        bottom_row.setContentsMargins(4, 0, 4, 0)
+        bottom_row.setContentsMargins(4, 2, 4, 0)
+        bottom_row.setSpacing(8)
 
-        status_suffix = f" ({BUILD_STATUS})" if BUILD_STATUS else ""
-        self.version_footer_lbl = QLabel(f"v{APP_VERSION}{status_suffix}")
+        self.version_footer_lbl = QLabel(f"v{APP_VERSION}")
         self.version_footer_lbl.setObjectName("SettingsFooterVersionLbl")
         bottom_row.addWidget(self.version_footer_lbl)
 
@@ -429,19 +488,36 @@ class ThemeDialog(QDialog):
         self.done_btn = QPushButton("Done")
         self.done_btn.setObjectName("ThemeDoneBtn")
         self.done_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.done_btn.clicked.connect(self.accept)
+        self.done_btn.clicked.connect(self._on_done_clicked)
         bottom_row.addWidget(self.done_btn)
+
+        self.size_grip = QSizeGrip(self)
+        self.size_grip.setFixedSize(14, 14)
+        self.size_grip.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        bottom_row.addWidget(self.size_grip)
 
         layout.addLayout(bottom_row)
         root_layout.addWidget(content_widget, stretch=1)
 
     def _create_themes_tab(self) -> QWidget:
         tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(8, 10, 8, 4)
-        layout.setSpacing(8)
+        tab_layout = QHBoxLayout(tab)
+        tab_layout.setContentsMargins(10, 10, 10, 8)
+        tab_layout.setSpacing(12)
 
-        # 1. Dark / Light Appearance Mode Row (Slidable Capsule Toggle with Sun & Moon Vector Logos)
+        # ─── LEFT PANE: GENERAL THEME SETTINGS & BLUR CONTROLS ───
+        self.left_scroll = QScrollArea()
+        self.left_scroll.setObjectName("ThemeLeftScrollArea")
+        self.left_scroll.setWidgetResizable(True)
+        self.left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        left_widget = QWidget()
+        left_widget.setObjectName("ThemeLeftContent")
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(4, 4, 10, 4)
+        left_layout.setSpacing(12)
+
+        # 1. Dark / Light Appearance Mode Row (Slidable Capsule Toggle)
         mode_row = QHBoxLayout()
         mode_row.setSpacing(8)
         mode_lbl = QLabel("Mode:")
@@ -459,7 +535,7 @@ class ThemeDialog(QDialog):
         self.mode_toggle.set_accent_color(self.theme_manager.current_tokens.get("accent_primary", "#F92672"))
         self.mode_toggle.modeToggled.connect(self._on_theme_mode_toggled)
         mode_row.addWidget(self.mode_toggle)
-        layout.addLayout(mode_row)
+        left_layout.addLayout(mode_row)
 
         # 2. Preset Dropdown Row (Filtered to Selected Mode Only)
         preset_row = QHBoxLayout()
@@ -473,7 +549,7 @@ class ThemeDialog(QDialog):
         self._populate_presets(is_dark=is_dark)
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
         preset_row.addWidget(self.preset_combo, stretch=1)
-        layout.addLayout(preset_row)
+        left_layout.addLayout(preset_row)
 
         # 3. Custom Themes Dropdown Row
         custom_row = QHBoxLayout()
@@ -487,19 +563,19 @@ class ThemeDialog(QDialog):
         self._populate_custom_themes()
         self.custom_combo.currentIndexChanged.connect(self._on_custom_theme_changed)
         custom_row.addWidget(self.custom_combo, stretch=1)
-        layout.addLayout(custom_row)
+        left_layout.addLayout(custom_row)
 
-        # Import / Export / Copy JSON Buttons Row
+        # 4. Import / Export / Copy JSON Buttons Row (NO "..." trailing dots)
         io_row = QHBoxLayout()
         io_row.setSpacing(6)
 
-        self.import_btn = QPushButton("Import Theme...")
+        self.import_btn = QPushButton("Import Theme")
         self.import_btn.setObjectName("ThemeIOBtn")
         self.import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.import_btn.clicked.connect(self._import_theme_modal)
         io_row.addWidget(self.import_btn)
 
-        self.export_btn = QPushButton("Export Theme...")
+        self.export_btn = QPushButton("Export Theme")
         self.export_btn.setObjectName("ThemeIOBtn")
         self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.export_btn.clicked.connect(self._export_theme_file)
@@ -510,43 +586,84 @@ class ThemeDialog(QDialog):
         self.copy_json_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_json_btn.clicked.connect(self._copy_theme_json)
         io_row.addWidget(self.copy_json_btn)
+        left_layout.addLayout(io_row)
 
-        layout.addLayout(io_row)
+        # Subtle sub-divider line
+        sub_sep = QFrame()
+        sub_sep.setFrameShape(QFrame.Shape.HLine)
+        sub_sep.setObjectName("ThemeSubDivider")
+        left_layout.addWidget(sub_sep)
 
-        # Glass Blur Effect Toggle Row
-        blur_row = QHBoxLayout()
+        # 5. Window Blur & Transparency Section
+        blur_toggle_row = QHBoxLayout()
+        blur_toggle_row.setSpacing(8)
         blur_lbl = QLabel("Window Blur:")
         blur_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
-        blur_row.addWidget(blur_lbl)
+        blur_toggle_row.addWidget(blur_lbl)
 
-        self.blur_check = QCheckBox("Enable Windows Acrylic / Mica frosted blur")
-        self.blur_check.setObjectName("BlurEffectCheck")
-        self.blur_check.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.blur_check.setStyleSheet("font-size: 12px;")
-        self.blur_check.setChecked(ConfigManager().get("blur_enabled", True))
-        self.blur_check.toggled.connect(self._on_blur_toggled)
-        blur_row.addWidget(self.blur_check, stretch=1)
-        layout.addLayout(blur_row)
+        is_blur = self.config.get("blur_enabled", True)
+        self.blur_desc_lbl = QLabel("On" if is_blur else "Off")
+        self.blur_desc_lbl.setStyleSheet("font-size: 12px; font-weight: 500;")
+        blur_toggle_row.addWidget(self.blur_desc_lbl)
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        divider.setObjectName("ThemeDivider")
-        layout.addWidget(divider)
+        blur_toggle_row.addStretch()
+
+        self.blur_toggle = BlurEffectToggle(is_blur=is_blur)
+        self.blur_toggle.set_accent_color(self.theme_manager.current_tokens.get("accent_primary", "#F92672"))
+        is_dark_theme = self.theme_manager.current_tokens.get("category", "dark") == "dark"
+        self.blur_toggle.set_off_track_color("#374151" if is_dark_theme else "#D1D5DB")
+        self.blur_toggle.blurToggled.connect(self._on_blur_toggled)
+        blur_toggle_row.addWidget(self.blur_toggle)
+        left_layout.addLayout(blur_toggle_row)
+
+        # Window Transparency Slider Row
+        row_trans = QHBoxLayout()
+        row_trans.setSpacing(8)
+        saved_trans = int(self.config.get("window_transparency", 65))
+        self.lbl_trans_title = QLabel(f"Transparency ({saved_trans}%):")
+        self.lbl_trans_title.setObjectName("lbl_trans_title")
+        self.lbl_trans_title.setStyleSheet("font-size: 12px; font-weight: 500;")
+        self.lbl_trans_title.setFixedWidth(115)
+        row_trans.addWidget(self.lbl_trans_title)
+
+        self.slider_trans = QSlider(Qt.Orientation.Horizontal)
+        self.slider_trans.setObjectName("ThemeTransSlider")
+        self.slider_trans.setRange(0, 100)
+        self.slider_trans.setValue(saved_trans)
+        self.slider_trans.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.slider_trans.valueChanged.connect(self._on_transparency_changed)
+        row_trans.addWidget(self.slider_trans, stretch=1)
+        left_layout.addLayout(row_trans)
+
+        # Enable/disable transparency slider depending on blur toggle
+        self.slider_trans.setEnabled(is_blur)
+        self.lbl_trans_title.setEnabled(is_blur)
+
+        left_layout.addStretch()
+        self.left_scroll.setWidget(left_widget)
+        tab_layout.addWidget(self.left_scroll, stretch=1)
+
+        # ─── SUBTLE VERTICAL DIVIDER BETWEEN PANES ───
+        self.pane_divider = QFrame()
+        self.pane_divider.setFrameShape(QFrame.Shape.VLine)
+        self.pane_divider.setObjectName("ThemePaneDivider")
+        tab_layout.addWidget(self.pane_divider)
+
+        # ─── RIGHT PANE: PALETTE CUSTOMIZATION & COLOR PICKERS ───
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setObjectName("ThemeRightScrollArea")
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        right_widget = QWidget()
+        right_widget.setObjectName("ThemeRightContent")
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(6, 4, 6, 4)
+        right_layout.setSpacing(8)
 
         self.custom_title = QLabel("Customize Palette Colors (Live Preview):")
         self.custom_title.setStyleSheet("font-size: 11px; font-weight: bold; letter-spacing: 0.5px;")
-        layout.addWidget(self.custom_title)
-
-        # Scroll area for color tokens
-        self.scroll = QScrollArea()
-        self.scroll.setObjectName("ThemeScrollArea")
-        self.scroll.setWidgetResizable(True)
-
-        self.tokens_container = QWidget()
-        self.tokens_container.setObjectName("ThemeTokensContainer")
-        self.tokens_layout = QVBoxLayout(self.tokens_container)
-        self.tokens_layout.setContentsMargins(0, 0, 0, 0)
-        self.tokens_layout.setSpacing(6)
+        right_layout.addWidget(self.custom_title)
 
         # Customizable tokens list
         self.editable_tokens = [
@@ -565,11 +682,9 @@ class ThemeDialog(QDialog):
 
         for token_key, label_name in self.editable_tokens:
             row = self._create_token_row(token_key, label_name)
-            self.tokens_layout.addWidget(row)
+            right_layout.addWidget(row)
 
-        self.tokens_layout.addStretch()
-        self.scroll.setWidget(self.tokens_container)
-        layout.addWidget(self.scroll, stretch=1)
+        right_layout.addSpacing(6)
 
         # Save Custom Theme Button (reduced width, centered, no trailing dots)
         self.save_btn = QPushButton("Save Custom Palette")
@@ -582,7 +697,11 @@ class ThemeDialog(QDialog):
         save_row.addStretch()
         save_row.addWidget(self.save_btn)
         save_row.addStretch()
-        layout.addLayout(save_row)
+        right_layout.addLayout(save_row)
+
+        right_layout.addStretch()
+        self.right_scroll.setWidget(right_widget)
+        tab_layout.addWidget(self.right_scroll, stretch=1)
 
         return tab
 
@@ -684,7 +803,9 @@ class ThemeDialog(QDialog):
                 found_current = True
                 installed_idx = self.builds_combo.count()
             suffix = " (Installed Current)" if is_curr else ""
-            self.builds_combo.addItem(f"{tag}{suffix}", rel)
+            status = rel.get("version_status", VERSION_STATUS_FUNCTIONAL)
+            status_tag = f" [{status.replace('_', ' ').title()}]" if status != VERSION_STATUS_FUNCTIONAL else ""
+            self.builds_combo.addItem(f"{tag}{status_tag}{suffix}", rel)
 
         if not found_current:
             self.builds_combo.insertItem(
@@ -712,6 +833,8 @@ class ThemeDialog(QDialog):
             desc_parts.append(f"({sha})")
         if date:
             desc_parts.append(f"[{date}]")
+        status = data.get("version_status", VERSION_STATUS_FUNCTIONAL)
+        desc_parts.append(f"Status: {status.replace('_', ' ').title()}")
         header_line = " ".join(desc_parts)
         first_line = body.splitlines()[0] if body else ""
         desc = f"{header_line}\n{first_line[:140]}"
@@ -1026,9 +1149,37 @@ class ThemeDialog(QDialog):
                 self.custom_combo.setCurrentIndex(idx)
             self.themeApplied.emit()
 
-    def _on_blur_toggled(self, checked: bool):
-        ConfigManager().set("blur_enabled", checked)
+    def _on_blur_toggled(self, is_blur: bool):
+        self.blur_desc_lbl.setText("On" if is_blur else "Off")
+        self.config.set("blur_enabled", is_blur, auto_save=False)
+        self.config.set("blur_intensity", "medium" if is_blur else "none", auto_save=False)
+        if hasattr(self, "slider_trans"):
+            self.slider_trans.setEnabled(is_blur)
+        if hasattr(self, "lbl_trans_title"):
+            self.lbl_trans_title.setEnabled(is_blur)
         self.themeApplied.emit()
+
+    def _on_transparency_changed(self, val: int):
+        self.lbl_trans_title.setText(f"Transparency ({val}%):")
+        self.config.set("window_transparency", val, auto_save=False)
+        self.themeApplied.emit()
+
+    def _on_done_clicked(self):
+        # Permanently save committed theme and effects to config.json
+        self.config.set("theme_id", self.theme_manager.current_theme_id, auto_save=False)
+        self.config.save()
+        self.accept()
+
+    def reject(self):
+        # Revert live in-memory changes back to initial state if closed without Done
+        self.config.set("blur_enabled", self._initial_blur_enabled, auto_save=False)
+        self.config.set("blur_intensity", self._initial_blur_intensity, auto_save=False)
+        self.config.set("window_transparency", self._initial_transparency, auto_save=False)
+        self.config.set("theme_id", self._initial_theme_id, auto_save=False)
+        if self.theme_manager.current_theme_id != self._initial_theme_id:
+            self.theme_manager.set_theme(self._initial_theme_id)
+        self.themeApplied.emit()
+        super().reject()
 
     def _run_manual_update_check(self):
         self.btn_check_updates.setEnabled(False)
@@ -1039,11 +1190,31 @@ class ThemeDialog(QDialog):
             self.btn_check_updates.setEnabled(True)
             self._load_live_builds()
 
-            if update_available:
-                tag = release_info.get("tag_name", "Latest")
-                self.update_status_lbl.setText(f"Update available: {tag}! You can select and switch versions from the dropdown below.")
+            status = release_info.get("current_status", VERSION_STATUS_FUNCTIONAL)
+            tag = release_info.get("tag_name", "Latest")
+
+            if status == VERSION_STATUS_DEPRECATED:
+                self.update_status_lbl.setText(
+                    f"Status: Deprecated. Installed version (v{APP_VERSION}) is deprecated and must be updated to {tag}."
+                )
+                dlg = DeprecatedUpdateDialog(release_info, self)
+                dlg.exec()
+            elif status == VERSION_STATUS_NOT_RECOMMENDED:
+                self.update_status_lbl.setText(
+                    f"Status: Not Recommended. Installed version (v{APP_VERSION}) is marked Not Recommended. Update to {tag} is highly recommended."
+                )
+                dlg = UpdatePromptDialog(release_info, mode=VERSION_STATUS_NOT_RECOMMENDED, parent=self)
+                dlg.exec()
+            elif update_available:
+                self.update_status_lbl.setText(
+                    f"Update available: {tag}! You can update directly or select versions from the dropdown below."
+                )
+                dlg = UpdatePromptDialog(release_info, mode=VERSION_STATUS_FUNCTIONAL, parent=self)
+                dlg.exec()
             else:
-                self.update_status_lbl.setText("You are currently running the latest compiled release build.")
+                self.update_status_lbl.setText(
+                    f"You are currently running the latest release build (v{APP_VERSION}). Status: Functional."
+                )
 
         self._check_worker.checkCompleted.connect(on_finished)
         self._check_worker.start()
@@ -1074,12 +1245,26 @@ class ThemeDialog(QDialog):
             QLabel {{
                 color: {t['text_primary']};
             }}
+            QLabel:disabled {{
+                color: {t['text_secondary']};
+                opacity: 0.6;
+            }}
             QLabel#custom_title {{
                 color: {t['text_secondary']};
             }}
-            QFrame#ThemeDivider {{
+            QFrame#ThemePaneDivider {{
                 background-color: {t['border_subtle']};
+                width: 1px;
+                max-width: 1px;
+                min-width: 1px;
+                border: none;
+            }}
+            QFrame#ThemeSubDivider {{
+                background-color: {t['border_subtle']};
+                height: 1px;
                 max-height: 1px;
+                min-height: 1px;
+                border: none;
             }}
             QTabWidget#SettingsTabWidget::pane {{
                 border: 1px solid {t['border_subtle']};
@@ -1145,9 +1330,63 @@ class ThemeDialog(QDialog):
             QPushButton#ThemeIOBtn:hover {{
                 background-color: {t['bg_card_hover']};
             }}
-            QScrollArea#ThemeScrollArea,
-            QWidget#ThemeTokensContainer {{
+            QScrollArea#ThemeLeftScrollArea,
+            QScrollArea#ThemeRightScrollArea,
+            QWidget#ThemeLeftContent,
+            QWidget#ThemeRightContent {{
                 background: transparent;
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: transparent;
+                width: 6px;
+                margin: 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {t.get('border_subtle', 'rgba(255, 255, 255, 0.18)')};
+                min-height: 20px;
+                border-radius: 3px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {t.get('accent_primary', '#F92672')};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+                background: none;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+            QLabel#lbl_trans_title:disabled {{
+                color: {t.get('text_secondary', '#777777')};
+                opacity: 0.5;
+            }}
+            QSlider#ThemeTransSlider::groove:horizontal {{
+                height: 4px;
+                background: {t.get('bg_card', 'rgba(255, 255, 255, 0.15)')};
+                border-radius: 2px;
+            }}
+            QSlider#ThemeTransSlider::sub-page:horizontal {{
+                background: {t.get('accent_primary', '#F92672')};
+                border-radius: 2px;
+            }}
+            QSlider#ThemeTransSlider::sub-page:horizontal:disabled {{
+                background: {t.get('border_subtle', 'rgba(255, 255, 255, 0.15)')};
+            }}
+            QSlider#ThemeTransSlider::handle:horizontal {{
+                background: #FFFFFF;
+                border: 1px solid {t.get('border_subtle', '#555555')};
+                width: 14px;
+                margin-top: -5px;
+                margin-bottom: -5px;
+                border-radius: 7px;
+            }}
+            QSlider#ThemeTransSlider::handle:horizontal:hover {{
+                background: {t.get('accent_primary', '#F92672')};
+            }}
+            QSlider#ThemeTransSlider::handle:horizontal:disabled {{
+                background: #666666;
                 border: none;
             }}
             QPushButton#ThemeSaveBtn {{
@@ -1162,20 +1401,10 @@ class ThemeDialog(QDialog):
             QPushButton#ThemeSaveBtn:hover {{
                 opacity: 0.9;
             }}
-            QCheckBox#BlurEffectCheck {{
-                color: {t['text_primary']};
-                spacing: 8px;
-            }}
-            QCheckBox#BlurEffectCheck::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 1px solid {t['border_subtle']};
-                border-radius: 4px;
-                background-color: {t['bg_card']};
-            }}
-            QCheckBox#BlurEffectCheck::indicator:checked {{
-                background-color: {t['accent_primary']};
-                border-color: {t['accent_primary']};
+            QSizeGrip {{
+                background: transparent;
+                width: 14px;
+                height: 14px;
             }}
             QLabel#SettingsFooterVersionLbl {{
                 font-size: 11px;
@@ -1282,3 +1511,7 @@ class ThemeDialog(QDialog):
 
         if hasattr(self, "mode_toggle"):
             self.mode_toggle.set_accent_color(t.get("accent_primary", "#F92672"))
+        if hasattr(self, "blur_toggle"):
+            self.blur_toggle.set_accent_color(t.get("accent_primary", "#F92672"))
+            is_dark_theme = t.get("category", "dark") == "dark"
+            self.blur_toggle.set_off_track_color("#374151" if is_dark_theme else "#D1D5DB")

@@ -24,6 +24,23 @@ from src.ui.graph_keypad import GraphKeypadWidget
 from src.ui.mode_icons import get_themed_icon
 
 
+class FunctionInputLineEdit(QLineEdit):
+    """
+    Specialized QLineEdit for graphing function inputs.
+    Emits focused signal on both mousePressEvent and focusInEvent cleanly
+    without violating SIP return type expectations.
+    """
+    focused = pyqtSignal()
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.focused.emit()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.focused.emit()
+
+
 class FunctionRowWidget(QFrame):
     """
     Equation card matching Windows Calculator Graphing card:
@@ -46,6 +63,12 @@ class FunctionRowWidget(QFrame):
         self._current_text_color = "#FFFFFF"
 
         self._init_ui()
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        self.focused.emit()
+        if not self.expr_input.hasFocus():
+            self.expr_input.setFocus()
 
     def update_theme_icons(self, text_color: str):
         self._current_text_color = text_color
@@ -75,7 +98,7 @@ class FunctionRowWidget(QFrame):
         layout.addWidget(self.lbl_fn)
 
         # Equation Text Field
-        self.expr_input = QLineEdit(self.graph_fn.raw_expression)
+        self.expr_input = FunctionInputLineEdit(self.graph_fn.raw_expression)
         self.expr_input.setObjectName("FunctionExprInput")
         self.expr_input.setPlaceholderText("Enter an expression")
         self.expr_input.setStyleSheet("""
@@ -90,7 +113,7 @@ class FunctionRowWidget(QFrame):
             }
         """)
         self.expr_input.textChanged.connect(self._on_text_changed)
-        self.expr_input.mousePressEvent = lambda e: (self.focused.emit(), QLineEdit.mousePressEvent(self.expr_input, e))
+        self.expr_input.focused.connect(self.focused.emit)
         layout.addWidget(self.expr_input, stretch=1)
 
         # Visibility Toggle Button (Eye / EyeOff vector icon, zero emojis)
@@ -136,7 +159,7 @@ class FunctionRowWidget(QFrame):
         self.setProperty("is_active", active)
         self.style().unpolish(self)
         self.style().polish(self)
-        if active:
+        if active and not self.expr_input.hasFocus():
             self.expr_input.setFocus()
 
     def _update_badge_color(self):

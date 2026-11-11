@@ -283,9 +283,11 @@ class DualTierDisplay(QFrame):
             self.primary_display.style().polish(self.primary_display)
 
     def set_drafting_state(self, expression_trail: str, active_token: str, live_preview: str = ""):
-        # If user is entering the second/subsequent operand, display complete formula in ribbon
+        # If user is entering the second/subsequent operand after an operator, display complete formula in ribbon
+        KNOWN_TRAILING_OPS = ("+", "-", "*", "/", "×", "÷", "−", "AND", "OR", "XOR", "<<", ">>", "mod", "%")
         if expression_trail:
-            if active_token:
+            trimmed = expression_trail.rstrip()
+            if active_token and any(trimmed.endswith(op) for op in KNOWN_TRAILING_OPS):
                 displayed_trail = f"{expression_trail}{active_token}".strip()
             else:
                 displayed_trail = expression_trail.strip()

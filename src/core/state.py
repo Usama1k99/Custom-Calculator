@@ -12,6 +12,54 @@ from src.core.crash_reporter import record_breadcrumb
 from src.core.input_validator import is_char_allowed, sanitize_leading_zeros
 
 
+UNARY_DISPLAY_TEMPLATES = {
+    "recip": "1/({x})",
+    "sqr": "sqr({x})",
+    "sqrt": "√({x})",
+    "cube": "cube({x})",
+    "cbrt": "³√({x})",
+    "pow10": "10^({x})",
+    "pow2": "2^({x})",
+    "exp_e": "e^({x})",
+    "fact": "fact({x})",
+    "abs": "abs({x})",
+    "log": "log({x})",
+    "log2": "log2({x})",
+    "ln": "ln({x})",
+    "floor": "floor({x})",
+    "ceil": "ceil({x})",
+    "dms": "dms({x})",
+    "deg": "degrees({x})",
+    "NOT": "NOT({x})",
+    "negate": "negate({x})",
+    # Trigonometric functions
+    "sin": "sin({x})",
+    "cos": "cos({x})",
+    "tan": "tan({x})",
+    "asin": "asin({x})",
+    "acos": "acos({x})",
+    "atan": "atan({x})",
+    "sinh": "sinh({x})",
+    "cosh": "cosh({x})",
+    "tanh": "tanh({x})",
+    "asinh": "asinh({x})",
+    "acosh": "acosh({x})",
+    "atanh": "atanh({x})",
+    "sec": "sec({x})",
+    "csc": "csc({x})",
+    "cot": "cot({x})",
+    "asec": "asec({x})",
+    "acsc": "acsc({x})",
+    "acot": "acot({x})",
+    "sech": "sech({x})",
+    "csch": "csch({x})",
+    "coth": "coth({x})",
+    "asech": "asech({x})",
+    "acsch": "acsch({x})",
+    "acoth": "acoth({x})",
+}
+
+
 class CalculatorState:
     def __init__(self, engine: MathEngine, db: HistoryDB, on_state_changed: Callable):
         self.engine = engine
@@ -23,6 +71,8 @@ class CalculatorState:
         self.expression_trail = ""   # Preceding tokens, e.g. "10 + 20 +"
         self.active_token = "0"      # Currently active number being keyed in
         self.pinned_expression = ""  # Post-evaluation formula, e.g. "10 + 20 + 30 ="
+        self.current_operand_repr: Optional[str] = None  # Operand expression representation, e.g. "√(sqr(1/(10)))"
+        self.is_unary_active = False # True when active_token was created by a unary operation
         self.is_evaluated = False
         self.has_error = False
 
@@ -49,11 +99,24 @@ class CalculatorState:
         if self.mode == "Programmer" and rad == "HEX":
             char = char.upper()
 
+        if self.is_unary_active:
+            # Typing fresh digits after unary operation starts a brand new number
+            self.active_token = "0." if char == "." else char
+            self.current_operand_repr = None
+            self.is_unary_active = False
+            self.is_evaluated = False
+            self.has_error = False
+            self.last_op_repeat = None
+            self._notify()
+            return
+
         if self.has_error or self.is_evaluated:
             # Overwrite after error or evaluation
             self.active_token = "0." if char == "." else char
             if self.is_evaluated:
                 self.expression_trail = ""
+            self.current_operand_repr = None
+            self.is_unary_active = False
             self.is_evaluated = False
             self.has_error = False
             self.last_op_repeat = None
@@ -85,6 +148,7 @@ class CalculatorState:
             return
 
         KNOWN_OPS = ("+", "-", "*", "/", "×", "÷", "−", "AND", "OR", "XOR", "<<", ">>", "mod", "%")
+        committed_repr = self.current_operand_repr if self.current_operand_repr else self.active_token
 
         if self.is_evaluated:
             # Ans chaining: use the previous result as the base
@@ -92,10 +156,12 @@ class CalculatorState:
             self.expression_trail = f"{res_str} {op} "
             self._last_committed_val = res_str
             self.active_token = ""
+            self.current_operand_repr = None
+            self.is_unary_active = False
             self.is_evaluated = False
             self.last_op_repeat = None
         else:
-            if not self.active_token:
+            if not self.active_token and not self.current_operand_repr:
                 # If active_token is empty and we already have a trailing operator, replace it!
                 if any(self.expression_trail.rstrip().endswith(o) for o in KNOWN_OPS):
                     tokens = self.expression_trail.strip().split()
@@ -103,28 +169,42 @@ class CalculatorState:
                         tokens[-1] = op
                         self.expression_trail = " ".join(tokens) + " "
             else:
-                self.expression_trail += f"{self.active_token} {op} "
+                self.expression_trail += f"{committed_repr} {op} "
                 self._last_committed_val = self.active_token
                 self.active_token = ""
+                self.current_operand_repr = None
+                self.is_unary_active = False
 
         self._notify()
 
     def input_unary_operation(self, func_type: str):
         """
         Immediate unary operations: 1/x (recip), x² (sqr), ²√x (sqrt), fact, abs, log, ln.
-        Operates immediately on the active token!
+        Operates immediately on the active token and chains ribbon representation like Windows Calculator.
         """
         record_breadcrumb("Input", f"Unary op '{func_type}'", active=self.active_token)
         if self.has_error:
             return
 
-        operand_str = self.active_token if self.active_token else (
-            self.engine.format_number(self.last_result) if self.last_result else "0"
-        )
+        if self.active_token:
+            operand_str = self.active_token
+        elif self.is_evaluated and self.last_result is not None:
+            operand_str = self.engine.format_number(self.last_result)
+        else:
+            operand_str = "0"
 
         success, val_str, dec_val = self.engine.evaluate(f"{func_type}({operand_str})", mode=self.mode)
         if success and dec_val is not None:
+            # Build Windows Calculator style operand representation
+            if self.current_operand_repr:
+                inner = self.current_operand_repr
+            else:
+                inner = operand_str
+
+            template = UNARY_DISPLAY_TEMPLATES.get(func_type, f"{func_type}({{x}})")
+            self.current_operand_repr = template.format(x=inner)
             self.active_token = val_str
+            self.is_unary_active = True
             self.is_evaluated = False
             self._notify()
         else:
@@ -147,23 +227,40 @@ class CalculatorState:
 
     def negate(self):
         """
-        Toggles +/- sign on the active token.
+        Toggles +/- sign on the active token and syncs preview ribbon representation.
         """
         record_breadcrumb("Input", "Negate (+/-)", active=self.active_token)
         if self.has_error:
             return
 
         if self.is_evaluated and self.last_result is not None:
+            prev_token = self.engine.format_number(self.last_result)
             self.last_result = -self.last_result
             self.active_token = self.engine.format_number(self.last_result)
+            self.current_operand_repr = f"negate({prev_token})"
             self.is_evaluated = False
+        elif self.current_operand_repr:
+            # If current representation already has negate(...) wrap, unwrap it; otherwise wrap
+            if self.current_operand_repr.startswith("negate(") and self.current_operand_repr.endswith(")"):
+                self.current_operand_repr = self.current_operand_repr[7:-1]
+            else:
+                self.current_operand_repr = f"negate({self.current_operand_repr})"
+
+            if self.active_token.startswith("-"):
+                self.active_token = self.active_token[1:]
+            elif self.active_token and self.active_token != "0":
+                self.active_token = f"-{self.active_token}"
         else:
             if self.active_token.startswith("-"):
                 self.active_token = self.active_token[1:]
+                if self.expression_trail:
+                    self.current_operand_repr = None
             else:
                 if self.active_token and self.active_token != "0":
                     self.active_token = f"-{self.active_token}"
-                elif not self.active_token:
+                    if self.expression_trail:
+                        self.current_operand_repr = f"negate({self.active_token[1:]})"
+                else:
                     self.active_token = "-0"
 
         self._notify()
@@ -172,6 +269,13 @@ class CalculatorState:
         record_breadcrumb("Input", "Backspace", active=self.active_token)
         if self.has_error or self.is_evaluated:
             self.clear_all()
+            return
+
+        if self.current_operand_repr or self.is_unary_active:
+            self.current_operand_repr = None
+            self.is_unary_active = False
+            self.active_token = "0"
+            self._notify()
             return
 
         if self.active_token:
@@ -199,6 +303,8 @@ class CalculatorState:
             self.clear_all()
         else:
             self.active_token = "0"
+            self.current_operand_repr = None
+            self.is_unary_active = False
             self._notify()
 
     def clear_all(self):
@@ -208,6 +314,8 @@ class CalculatorState:
         record_breadcrumb("Action", "Clear All (C)")
         self.expression_trail = ""
         self.active_token = "0"
+        self.current_operand_repr = None
+        self.is_unary_active = False
         self.pinned_expression = ""
         self.is_evaluated = False
         self.has_error = False
@@ -245,7 +353,7 @@ class CalculatorState:
 
         # ─── CASE B: STANDARD EVALUATION ─────────────────────────────
         # If user pressed '=' with empty expression and active_token is 0
-        if not self.expression_trail and (not self.active_token or self.active_token == "0"):
+        if not self.expression_trail and (not self.active_token or self.active_token == "0") and not self.current_operand_repr:
             self.pinned_expression = "0 ="
             self.is_evaluated = True
             self.on_state_changed(
@@ -256,11 +364,17 @@ class CalculatorState:
             )
             return
 
-        # Build complete formula
+        # Build complete display formula for pinned ribbon
+        final_repr = self.current_operand_repr if self.current_operand_repr else self.active_token
+        if final_repr:
+            display_formula = f"{self.expression_trail.strip()} {final_repr.strip()}".strip()
+        else:
+            display_formula = self.expression_trail.strip()
+
+        # Engine expression to evaluate (uses numerical value of active_token)
         if self.active_token:
             expr_to_eval = f"{self.expression_trail.strip()} {self.active_token.strip()}".strip()
         else:
-            # Incomplete expression like "5 + " -> repeat operand: "5 + 5"
             expr_to_eval = self.expression_trail.strip()
 
         # Capture repeat operation components
@@ -274,12 +388,14 @@ class CalculatorState:
 
         if success and dec_val is not None:
             self.last_result = dec_val
-            self.pinned_expression = f"{expr_to_eval} ="
+            self.pinned_expression = f"{display_formula} ="
             self.is_evaluated = True
             self.active_token = result_str
             self.expression_trail = ""
+            self.current_operand_repr = None
+            self.is_unary_active = False
 
-            self._record_history(expr_to_eval, result_str)
+            self._record_history(display_formula, result_str)
 
             self.on_state_changed(
                 is_evaluated=True,
@@ -317,17 +433,24 @@ class CalculatorState:
             pass
 
     def _notify(self):
-        # Calculate real-time live preview if multiple operands or expressions present
+        # Determine the display trail
+        if self.is_evaluated:
+            displayed_trail = self.pinned_expression
+        elif self.current_operand_repr:
+            displayed_trail = f"{self.expression_trail}{self.current_operand_repr}"
+        else:
+            displayed_trail = self.expression_trail
+
+        # Calculate real-time live preview if expression features are present
         live_ghost = ""
         full_expr = f"{self.expression_trail.strip()} {self.active_token.strip()}".strip()
 
-        # If expression is incomplete (e.g. ends with an operator like "60 +" or open parenthesis),
-        # NEVER calculate or show preview!
         if full_expr and not self.is_evaluated and not self.has_error:
             if not is_expression_incomplete(full_expr):
                 has_expr_features = (
                     bool(self.expression_trail)
-                    or any(ch in full_expr for ch in ("+", "-", "*", "/", "×", "÷", "^", "%", "(", ")"))
+                    or any(ch in full_expr for ch in ("+", "*", "/", "×", "÷", "^", "%", "(", ")"))
+                    or ("-" in full_expr and not (full_expr.startswith("-") and "-" not in full_expr[1:]))
                     or any(fn in full_expr.lower() for fn in ("sin", "cos", "tan", "log", "ln", "sqrt", "mod", "fact", "abs", "pi", "e"))
                 )
                 if has_expr_features:
@@ -340,7 +463,7 @@ class CalculatorState:
 
         self.on_state_changed(
             is_evaluated=self.is_evaluated,
-            expression_trail=self.pinned_expression if self.is_evaluated else self.expression_trail,
+            expression_trail=displayed_trail,
             active_token=self.active_token,
             live_preview=live_ghost
         )

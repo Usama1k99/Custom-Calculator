@@ -334,12 +334,63 @@ class ThemeManager:
                 pass
         return hex_val
 
-    def generate_qss(self, blur_enabled: bool = True) -> str:
+    def generate_qss(self, blur_enabled: bool = True, window_transparency: Optional[int] = None) -> str:
         """
         Builds the refined Windows Calculator-style stylesheet with theme-reactive SVGs.
+        window_transparency is percentage (0..100), default 60 (slightly increased transparency).
         """
         t = self.current_tokens
-        bg_window = self._hex_to_rgba(t['bg_base'], 0.65) if blur_enabled else t['bg_base']
+        is_dark = t.get("category", "dark") == "dark"
+
+        if window_transparency is None:
+            try:
+                from src.core.config import ConfigManager
+                window_transparency = ConfigManager().get("window_transparency", 60)
+            except Exception:
+                window_transparency = 60
+
+        if blur_enabled:
+            # Transparency range 0 (opaque) to 100 (fully transparent glass)
+            trans_pct = max(0, min(100, window_transparency))
+            # Minimum alpha of 0.08 (20/255) prevents Windows DWM from treating 100% transparency as click-through on empty areas
+            base_alpha = max(0.08, (100.0 - trans_pct) / 100.0)
+            if not is_dark and base_alpha > 0.08:
+                base_alpha = min(1.0, base_alpha + 0.04)
+
+            bg_window = self._hex_to_rgba(t['bg_base'], base_alpha)
+            bg_num = self._hex_to_rgba(t['bg_card'], min(0.95, base_alpha * 1.05 + 0.08))
+            bg_num_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.95, base_alpha * 1.40 + 0.15))
+            bg_num_active = self._hex_to_rgba(t['bg_card_active'], min(0.98, base_alpha * 1.70 + 0.25))
+            bg_op = self._hex_to_rgba(t['bg_op'], min(0.92, base_alpha * 0.95 + 0.08))
+            bg_op_hover = self._hex_to_rgba(t['bg_op_hover'], min(0.95, base_alpha * 1.35 + 0.15))
+            bg_op_active = self._hex_to_rgba(t.get('bg_op_active', t.get('bg_card_active', t['bg_op'])), min(0.98, base_alpha * 1.65 + 0.25))
+            bg_fn = self._hex_to_rgba(t['bg_fn'], min(0.90, base_alpha * 0.90 + 0.08))
+            bg_fn_hover = self._hex_to_rgba(t['bg_fn_hover'], min(0.95, base_alpha * 1.30 + 0.15))
+            border_key = "rgba(255, 255, 255, 0.08)" if is_dark else "rgba(0, 0, 0, 0.08)"
+            border_window = "1px solid rgba(255, 255, 255, 0.12)" if is_dark else "1px solid rgba(0, 0, 0, 0.10)"
+            bg_overlay = self._hex_to_rgba(t['bg_surface'], min(0.96, base_alpha + 0.35))
+            bg_history_drawer = self._hex_to_rgba(t['bg_base'], min(0.92, base_alpha * 0.95 + 0.08))
+            bg_history_card = self._hex_to_rgba(t['bg_card'], min(0.88, base_alpha * 1.05 + 0.08))
+            bg_history_card_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.92, base_alpha * 1.35 + 0.15))
+            bg_history_pill = self._hex_to_rgba(t['bg_surface'], min(0.85, base_alpha * 0.95 + 0.10))
+        else:
+            # When blur is off: STRICTLY OPAQUE (no transparency applied)
+            bg_window = t['bg_base']
+            bg_num = t['bg_card']
+            bg_num_hover = t['bg_card_hover']
+            bg_num_active = t['bg_card_active']
+            bg_op = t['bg_op']
+            bg_op_hover = t['bg_op_hover']
+            bg_op_active = t.get('bg_op_active', t.get('bg_card_active', t['bg_op']))
+            bg_fn = t['bg_fn']
+            bg_fn_hover = t['bg_fn_hover']
+            border_key = t['border_subtle']
+            border_window = "none"
+            bg_overlay = t['bg_surface']
+            bg_history_drawer = t['bg_surface']
+            bg_history_card = t['bg_card']
+            bg_history_card_hover = t['bg_card_hover']
+            bg_history_pill = t['bg_surface']
 
         # Ensure dynamically tinted SVGs are written and absolute posix paths are used in QSS
         from src.ui.mode_icons import get_themed_svg_path
@@ -351,10 +402,11 @@ class ThemeManager:
         return f"""
         /* ─── ROOT WINDOW & CENTRAL CONTAINER ──────────────────────── */
         QMainWindow {{
-            background: transparent;
+            background-color: {bg_window};
         }}
         QWidget#CentralWidget {{
             background-color: {bg_window};
+            border: {border_window};
             border-radius: 8px;
             color: {t['text_primary']};
             font-family: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
@@ -473,37 +525,41 @@ class ThemeManager:
             border-radius: 4px;
             font-size: 15px;
             font-weight: 400;
-            border: 1px solid {t['border_subtle']};
+            border: 1px solid {border_key};
         }}
         QPushButton.numKey {{
-            background-color: {t['bg_card']};
+            background-color: {bg_num};
             color: {t['text_primary']};
             font-size: 17px;
             font-weight: 600;
         }}
         QPushButton.numKey:hover {{
-            background-color: {t['bg_card_hover']};
-            border-color: rgba(255, 255, 255, 0.14);
+            background-color: {bg_num_hover};
+            border-color: rgba(255, 255, 255, 0.18);
         }}
         QPushButton.numKey:pressed {{
-            background-color: {t['bg_card_active']};
+            background-color: {bg_num_active};
         }}
         QPushButton.opKey {{
-            background-color: {t['bg_op']};
+            background-color: {bg_op};
             color: {t['text_primary']};
             font-size: 17px;
         }}
         QPushButton.opKey:hover {{
-            background-color: {t['bg_op_hover']};
-            border-color: rgba(255, 255, 255, 0.14);
+            background-color: {bg_op_hover};
+            border-color: rgba(255, 255, 255, 0.18);
+        }}
+        QPushButton.opKey:pressed {{
+            background-color: {bg_op_active};
         }}
         QPushButton.fnKey {{
-            background-color: {t['bg_fn']};
+            background-color: {bg_fn};
             color: {t['text_primary']};
             font-size: 13px;
         }}
         QPushButton.fnKey:hover {{
-            background-color: {t['bg_fn_hover']};
+            background-color: {bg_fn_hover};
+            border-color: rgba(255, 255, 255, 0.18);
         }}
         QPushButton.equalsKey {{
             background-color: {t['accent_primary']};
@@ -545,6 +601,7 @@ class ThemeManager:
         }}
 
         /* ─── NAVIGATION SIDEBAR (WINDOWS CALC HAMBURGER DRAWER) ───── */
+        /* Must always be 100% solid & opaque regardless of blur or transparency */
         QFrame#NavSidebar {{
             background-color: {t['bg_surface']};
             border-right: 1px solid {t['border_subtle']};
@@ -559,7 +616,8 @@ class ThemeManager:
         QScrollArea#NavScrollArea,
         QWidget#NavScrollContainer,
         QScrollArea#NavScrollArea > QWidget > QWidget {{
-            background: transparent;
+            background-color: {t['bg_surface']};
+            background: {t['bg_surface']};
             border: none;
         }}
         QLabel.sidebarCategory, QLabel[class="sidebarCategory"] {{
@@ -616,8 +674,9 @@ class ThemeManager:
         }}
         QFrame#SidebarSettingsDivider {{
             background-color: {t['border_subtle']};
+            height: 1px;
             max-height: 1px;
-            margin: 6px 12px;
+            margin: 4px 12px;
             border: none;
         }}
 
@@ -625,19 +684,19 @@ class ThemeManager:
         QFrame#ConverterView {{
             background-color: transparent;
             border: none;
-            padding: 12px 18px;
+            padding: 4px 14px;
         }}
         QComboBox.unitCombo {{
-            background-color: {t['bg_card']};
+            background-color: {bg_num};
             color: {t['text_primary']};
-            border: 1px solid {t['border_subtle']};
+            border: 1px solid {border_key};
             border-radius: 6px;
-            padding: 7px 12px;
+            padding: 5px 10px;
             font-size: 13px;
             font-weight: 500;
         }}
         QComboBox.unitCombo:hover {{
-            background-color: {t['bg_card_hover']};
+            background-color: {bg_num_hover};
             border-color: rgba(255, 255, 255, 0.2);
         }}
         QComboBox.unitCombo:focus {{
@@ -671,9 +730,10 @@ class ThemeManager:
             color: {t['text_primary']};
             border: none;
             border-bottom: 2px solid {t['accent_primary']};
-            font-size: 32px;
+            font-size: 26px;
             font-weight: 600;
-            padding: 4px 0;
+            padding: 1px 0;
+            margin: 0;
         }}
 
         /* ─── PROGRAMMER VIEW ─────────────────────────────────────── */
@@ -916,7 +976,7 @@ class ThemeManager:
 
         /* ─── HISTORY DRAWER ──────────────────────────────────────── */
         QFrame#HistoryDrawer {{
-            background-color: {t['bg_surface']};
+            background-color: {bg_history_drawer};
             border-left: 1px solid {t['border_subtle']};
         }}
         QLabel.historyTitle, QLabel[class="historyTitle"] {{
@@ -924,6 +984,7 @@ class ThemeManager:
             font-size: 11px;
             letter-spacing: 0.8px;
             color: {t['text_secondary']};
+            background: transparent;
         }}
         QPushButton#HistoryCloseBtn {{
             background: transparent;
@@ -933,12 +994,12 @@ class ThemeManager:
             border-radius: 4px;
         }}
         QPushButton#HistoryCloseBtn:hover {{
-            background-color: {t['bg_card_hover']};
+            background-color: {bg_history_card_hover};
             color: {t['text_primary']};
         }}
         QLineEdit#HistorySearch {{
-            background-color: {t['bg_card']};
-            border: 1px solid {t['border_subtle']};
+            background-color: {bg_history_card};
+            border: 1px solid {border_key};
             border-radius: 6px;
             padding: 6px 10px;
             color: {t['text_primary']};
@@ -947,8 +1008,11 @@ class ThemeManager:
         QLineEdit#HistorySearch:focus {{
             border-color: {t['accent_primary']};
         }}
-        QScrollArea#HistoryScroll, QWidget#HistoryScrollContainer {{
+        QScrollArea#HistoryScroll,
+        QScrollArea#HistoryScroll > QWidget,
+        QWidget#HistoryScrollContainer {{
             background: transparent;
+            background-color: transparent;
             border: none;
         }}
         QLabel.historySessionHeader, QLabel[class="historySessionHeader"] {{
@@ -957,20 +1021,21 @@ class ThemeManager:
             color: {t['accent_primary']};
             padding: 8px 0 2px 2px;
             letter-spacing: 0.5px;
+            background: transparent;
         }}
         QFrame.historyCard, QFrame[class="historyCard"] {{
-            background-color: {t['bg_card']};
-            border: 1px solid {t['border_subtle']};
+            background-color: {bg_history_card};
+            border: 1px solid {border_key};
             border-radius: 6px;
             padding: 6px 8px;
         }}
         QFrame.historyCard:hover, QFrame[class="historyCard"]:hover {{
-            background-color: {t['bg_card_hover']};
+            background-color: {bg_history_card_hover};
             border-color: {t['accent_primary']};
         }}
         QLabel.historyModePill, QLabel[class="historyModePill"] {{
-            background-color: {t['bg_surface']};
-            border: 1px solid {t['border_subtle']};
+            background-color: {bg_history_pill};
+            border: 1px solid {border_key};
             border-radius: 3px;
             padding: 1px 5px;
             font-size: 9px;
@@ -980,24 +1045,28 @@ class ThemeManager:
         QLabel.historyTime, QLabel[class="historyTime"] {{
             font-size: 10px;
             color: {t['text_secondary']};
+            background: transparent;
         }}
         QLabel.historyExpr, QLabel[class="historyExpr"] {{
             font-size: 11px;
             color: {t['text_secondary']};
+            background: transparent;
         }}
         QLabel.historyRes, QLabel[class="historyRes"] {{
             font-size: 15px;
             font-weight: bold;
             color: {t['text_primary']};
+            background: transparent;
         }}
         QLabel.historyEmpty, QLabel[class="historyEmpty"] {{
             color: {t['text_secondary']};
             font-size: 12px;
             padding: 20px 0;
+            background: transparent;
         }}
         QPushButton.historyActionBtn, QPushButton[class="historyActionBtn"] {{
-            background-color: {t['bg_card']};
-            border: 1px solid {t['border_subtle']};
+            background-color: {bg_history_card};
+            border: 1px solid {border_key};
             border-radius: 5px;
             padding: 5px 10px;
             font-size: 11px;
@@ -1005,7 +1074,7 @@ class ThemeManager:
             color: {t['text_primary']};
         }}
         QPushButton.historyActionBtn:hover, QPushButton[class="historyActionBtn"]:hover {{
-            background-color: {t['bg_card_hover']};
+            background-color: {bg_history_card_hover};
         }}
         QPushButton.historyActionBtn:disabled, QPushButton[class="historyActionBtn"]:disabled {{
             opacity: 0.35;

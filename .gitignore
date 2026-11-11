@@ -2,6 +2,7 @@
 planning/
 .agent/
 .agents/
+PROJECT.md
 
 # Python artifacts
 __pycache__/

@@ -33,17 +33,25 @@ def clamp_day(year: int, month: int, day: int) -> int:
 
 
 def add_months(d: date, delta_months: int) -> date:
-    """Safely adds or subtracts months, handling month/year boundaries and clamping days."""
+    """Safely adds or subtracts months, handling month/year boundaries and clamping within valid years."""
     total_m = (d.year * 12 + (d.month - 1)) + delta_months
     new_year = total_m // 12
+    if new_year > 9999:
+        return date(9999, 12, 31)
+    if new_year < 1:
+        return date(1, 1, 1)
     new_month = (total_m % 12) + 1
     new_day = clamp_day(new_year, new_month, d.day)
     return date(new_year, new_month, new_day)
 
 
 def add_years(d: date, delta_years: int) -> date:
-    """Safely adds or subtracts years, handling leap year Feb 29 clamping."""
+    """Safely adds or subtracts years, handling leap year Feb 29 clamping and year bounds [1..9999]."""
     new_year = d.year + delta_years
+    if new_year > 9999:
+        return date(9999, 12, 31)
+    if new_year < 1:
+        return date(1, 1, 1)
     new_day = clamp_day(new_year, d.month, d.day)
     return date(new_year, d.month, new_day)
 
@@ -51,15 +59,16 @@ def add_years(d: date, delta_years: int) -> date:
 def count_business_days(d1: date, d2: date) -> Tuple[int, int]:
     """
     Counts working days (Monday-Friday) and weekend days (Saturday-Sunday)
-    between two dates.
+    between two dates in O(1) time complexity.
     """
     if d1 == d2:
         return 0, 0
     start, end = (d2, d1) if d1 > d2 else (d1, d2)
     total_days = (end - start).days
 
-    working_days = 0
-    curr = start + timedelta(days=1)
+    full_weeks = total_days // 7
+    working_days = full_weeks * 5
+    curr = start + timedelta(days=full_weeks * 7 + 1)
     while curr <= end:
         if curr.weekday() < 5:  # Monday is 0, Friday is 4
             working_days += 1
@@ -98,9 +107,9 @@ def calculate_date_difference(d1: date, d2: date) -> DateDifferenceResult:
     # Calculate years
     curr = start
     years = 0
-    while True:
+    while curr.year < end.year:
         nxt = add_years(curr, 1)
-        if nxt <= end:
+        if nxt <= end and nxt > curr:
             curr = nxt
             years += 1
         else:
@@ -108,9 +117,9 @@ def calculate_date_difference(d1: date, d2: date) -> DateDifferenceResult:
 
     # Calculate months
     months = 0
-    while True:
+    while (curr.year, curr.month) < (end.year, end.month):
         nxt = add_months(curr, 1)
-        if nxt <= end:
+        if nxt <= end and nxt > curr:
             curr = nxt
             months += 1
         else:

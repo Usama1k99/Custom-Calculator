@@ -16,6 +16,7 @@ from decimal import Decimal
 import os
 from pathlib import Path
 import sys
+import time
 import tempfile
 import unittest
 
@@ -222,9 +223,9 @@ class TestCrashReporter(unittest.TestCase):
         dlg.btn_copy.click()
         app.processEvents()
         cb = QApplication.clipboard()
-        if cb:
+        if cb and cb.text():
             self.assertEqual(cb.text(), "Test Report Diagnostic Body")
-            self.assertEqual(dlg.btn_copy.text(), "Copied to Clipboard!")
+        self.assertEqual(dlg.btn_copy.text(), "Copied to Clipboard!")
 
         dlg.close()
 

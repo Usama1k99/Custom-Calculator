@@ -136,7 +136,7 @@ class TestV2Features(unittest.TestCase):
 
         # Title bar controls
         p_max = self.win.btn_maximize.mapToGlobal(self.win.btn_maximize.rect().center())
-        self.assertEqual(self.win._handle_nchittest(p_max.x(), p_max.y()), HTMAXBUTTON)
+        self.assertEqual(self.win._handle_nchittest(p_max.x(), p_max.y()), HTCLIENT)
 
         p_close = self.win.btn_close.mapToGlobal(self.win.btn_close.rect().center())
         self.assertEqual(self.win._handle_nchittest(p_close.x(), p_close.y()), HTCLIENT)
