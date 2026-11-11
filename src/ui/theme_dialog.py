@@ -34,7 +34,8 @@ from src.ui.mode_icons import get_themed_svg_path
 from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
     VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
-    apply_update_and_restart, is_license_entry, get_release_download_url, parse_semver
+    apply_update_and_restart, is_license_entry, get_release_download_url, parse_semver,
+    is_connected_to_internet
 )
 
 
@@ -660,10 +661,25 @@ class ThemeDialog(QDialog):
         layout.addLayout(actions_v)
         layout.addStretch()
 
+        if not is_connected_to_internet(timeout=1.5):
+            self.btn_check_updates.setEnabled(False)
+            self.builds_combo.setEnabled(False)
+            self.btn_install_selected.setEnabled(False)
+            self.update_status_lbl.setText("Not connected to internet.")
+
         return tab
 
     def _load_live_builds(self):
         """Fetches releases and commits live in the background and populates the build selector."""
+        if not is_connected_to_internet(timeout=1.5):
+            self.btn_check_updates.setEnabled(False)
+            self.builds_combo.setEnabled(False)
+            self.btn_install_selected.setEnabled(False)
+            self.update_status_lbl.setText("Not connected to internet.")
+            return
+
+        self.btn_check_updates.setEnabled(True)
+        self.builds_combo.setEnabled(True)
         self._builds_worker = BuildsFetchWorker()
         self._builds_worker.buildsFetched.connect(self._populate_builds_list)
         self._builds_worker.start()
@@ -1031,11 +1047,25 @@ class ThemeDialog(QDialog):
         self.themeApplied.emit()
 
     def _run_manual_update_check(self):
+        if not is_connected_to_internet(timeout=1.5):
+            self.btn_check_updates.setEnabled(False)
+            self.builds_combo.setEnabled(False)
+            self.btn_install_selected.setEnabled(False)
+            self.update_status_lbl.setText("Not connected to internet.")
+            return
+
         self.btn_check_updates.setEnabled(False)
         self.update_status_lbl.setText("Checking GitHub API for latest release...")
         self._check_worker = VersionCheckWorker()
 
         def on_finished(update_available: bool, release_info: dict):
+            if release_info.get("is_offline"):
+                self.btn_check_updates.setEnabled(False)
+                self.builds_combo.setEnabled(False)
+                self.btn_install_selected.setEnabled(False)
+                self.update_status_lbl.setText("Not connected to internet.")
+                return
+
             self.btn_check_updates.setEnabled(True)
             self._load_live_builds()
 

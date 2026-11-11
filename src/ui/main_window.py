@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 from src.core.config import ConfigManager
 from src.core.engine import MathEngine, AngleMode
 from src.core.state import CalculatorState
-from src.core.updater import VersionCheckWorker
+from src.core.updater import VersionCheckWorker, is_connected_to_internet
 from src.database.history_db import HistoryDB
 from src.ui.theme_manager import ThemeManager
 from src.ui.title_bar import CustomTitleBar
@@ -688,12 +688,14 @@ class MainWindow(QMainWindow):
         return ctx
 
     def _start_version_check(self):
+        if not is_connected_to_internet(timeout=1.5):
+            return
         self.version_worker = VersionCheckWorker(self)
         self.version_worker.checkCompleted.connect(self._on_version_check_result)
         self.version_worker.start()
 
     def _on_version_check_result(self, update_available: bool, release_info: dict):
-        if update_available:
+        if update_available and not release_info.get("is_offline"):
             dlg = UpdatePromptDialog(release_info, self)
             dlg.exec()
 
