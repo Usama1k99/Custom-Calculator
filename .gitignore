@@ -63,6 +63,7 @@ crash_reports/
 *.log
 *.png
 scratch/
+release_binaries/
 
 
 PROJECT.md
