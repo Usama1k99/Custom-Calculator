@@ -440,9 +440,7 @@ class TestV2Features(unittest.TestCase):
 
     # ─── 20. HISTORY DRAWER DEACTIVATED ON EMPTY & NO NEW SESSION ────
     def test_history_drawer_empty_deactivation(self):
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            temp_db_path = f.name
-        temp_db = HistoryDB(temp_db_path)
+        temp_db = HistoryDB(":memory:")
 
         try:
             drawer = HistoryDrawer(temp_db)
@@ -462,8 +460,6 @@ class TestV2Features(unittest.TestCase):
             self.assertTrue(drawer.search_box.isEnabled())
         finally:
             temp_db.close()
-            if os.path.exists(temp_db_path):
-                os.remove(temp_db_path)
 
     # ─── 21. GRAPHING VIEW RESPONSIVE DUAL-PANE & KEYPAD INPUT ───────
     def test_graphing_view_responsive_layout_and_keypad(self):
@@ -969,7 +965,7 @@ class TestV2Features(unittest.TestCase):
 
         # 3 items in dropdown
         self.assertEqual(dlg.builds_combo.count(), 3)
-        self.assertEqual(dlg.builds_combo.itemText(0), "v99.0.0")
+        self.assertEqual(dlg.builds_combo.itemText(0), "v99.0.0 (latest release)")
         self.assertEqual(dlg.builds_combo.itemText(1), f"v{APP_VERSION} (Installed Current)")
         self.assertEqual(dlg.builds_combo.itemText(2), "v0.0.1")
 

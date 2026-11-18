@@ -186,7 +186,8 @@ class HistoryDrawer(QFrame):
 
         layout.addLayout(bottom_row)
 
-        self.refresh_history()
+        if self.isVisible():
+            self.refresh_history()
 
     def refresh_history(self):
         """

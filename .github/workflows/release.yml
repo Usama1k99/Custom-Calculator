@@ -32,14 +32,40 @@ jobs:
         run: |
           pyinstaller --noconfirm --clean --windowed --onefile --name "CustomCalculator" --icon "assets/icons/app_icon.ico" --add-data "assets;assets" main.py
 
+      - name: Generate Release Notes & Status Metadata
+        id: meta
+        shell: python
+        run: |
+          import os
+          ref = os.environ.get("GITHUB_REF_NAME", "")
+          clean_v = ref.lstrip("v")
+          
+          status_title = f"Custom Calculator {ref}"
+          body = f"Official standalone release binary for Custom Calculator {ref}.\nDownload `CustomCalculator.exe` below to run immediately on Windows with zero setup.\n\n"
+          
+          if clean_v == "0.5.0":
+              status_title = f"Custom Calculator {ref} [Deprecated]"
+              body += "Status: deprecated\n"
+          elif clean_v == "0.6.0":
+              status_title = f"Custom Calculator {ref} [Not Recommended]"
+              body += "Status: not_recommended\n"
+          else:
+              body += "Status: functional\nDeprecated versions: v0.5.0\nNot recommended: v0.6.0\n"
+
+          with open("release_notes.txt", "w", encoding="utf-8") as f:
+              f.write(body)
+          
+          gh_output = os.environ.get("GITHUB_OUTPUT")
+          if gh_output:
+              with open(gh_output, "a", encoding="utf-8") as f:
+                  f.write(f"title={status_title}\n")
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/CustomCalculator.exe
-          name: Custom Calculator ${{ github.ref_name }}
-          body: |
-            Official standalone release binary for Custom Calculator ${{ github.ref_name }}.
-            Download `CustomCalculator.exe` below to run immediately on Windows with zero setup.
+          name: ${{ steps.meta.outputs.title }}
+          body_path: release_notes.txt
           draft: false
           prerelease: false
         env:
