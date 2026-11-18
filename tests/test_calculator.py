@@ -84,16 +84,8 @@ class TestMathEngineEdgeCases(unittest.TestCase):
 
 class TestCalculatorStateEdgeCases(unittest.TestCase):
     def setUp(self):
-        self.test_db_path = "data/unit_test_state.db"
-        p = Path(self.test_db_path)
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception:
-                pass
-
         self.engine = MathEngine()
-        self.db = HistoryDB(self.test_db_path)
+        self.db = HistoryDB(":memory:")
         self.events = []
 
         def callback(is_evaluated, expression_trail, active_token, live_preview):
@@ -107,12 +99,7 @@ class TestCalculatorStateEdgeCases(unittest.TestCase):
         self.state = CalculatorState(self.engine, self.db, callback)
 
     def tearDown(self):
-        try:
-            p = Path(self.test_db_path)
-            if p.exists():
-                p.unlink()
-        except Exception:
-            pass
+        self.db.close()
 
     def test_multiple_decimals_blocked(self):
         self.state.input_digit("5")

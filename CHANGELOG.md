@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * In the Version Settings panel, automatically disabled update check and version switching buttons when offline, displaying a clean "Not connected to internet." notice without emojis.
 
 ### Fixed
+* Freeze / Hang on Application Exit (`src/ui/main_window.py`, `src/ui/theme_dialog.py`):
+  - Discovered and eliminated the root cause of app freezing/hanging in "Not Responding" state upon closing: `MainWindow.closeEvent()` and `ThemeDialog.closeEvent()` called `terminate()` on running background `QThread` network workers followed by unbounded `wait()`. On Windows, calling `TerminateThread` on threads blocked in Win32 socket calls (`mswsock.dll`) corrupts CRT state and deadlocks the Qt GUI thread.
+  - Replaced unsafe `terminate()` calls with safe signal disconnection (`disconnect()`), cooperative thread interruption (`requestInterruption()`), and bounded non-blocking waits (`wait(50)`).
+* Instant Application Startup Acceleration (`src/ui/main_window.py`, `src/ui/theme_dialog.py`):
+  - Removed synchronous `is_connected_to_internet(timeout=1.5)` socket probes that ran directly on the GUI main thread inside `_start_version_check()` and `_load_live_builds()`, which previously froze window rendering for 1.5–4.5 seconds on latent networks. All connectivity checks now run purely within background worker threads.
+  - Deferred automatic update check invocation via non-blocking `QTimer.singleShot(1000, self._start_version_check)`, allowing the calculator window to render instantly on launch.
+  - Removed duplicate `self._apply_theme()` execution during `MainWindow.__init__`, consolidating theme application into `showEvent` and eliminating redundant stylesheet recalculations.
+* Version Marking System & "(latest release)" Labeling (`src/core/updater.py`, `src/ui/theme_dialog.py`):
+  - Marked `0.5.0` build as `[Deprecated]` (mandatory automatic upgrade without prompt) and `0.6.0` as `[Not Recommended]` (amber warning banner) in compliance with `planning/versions_and_exe_build.md`.
+  - Automatically identifies the latest semantic release across all available builds and appends ` (latest release)` to its dropdown entry and details view header.
 * Multi-Tiered Update & Version Listing Resilience (`src/core/updater.py`):
   - Solved GitHub REST API unauthenticated 60 requests/hour IP rate limiting (`HTTP 403: rate limit exceeded`) that caused the app to silently fail to discover newer releases and left the Versions dropdown empty.
   - Implemented multi-tiered release discovery:

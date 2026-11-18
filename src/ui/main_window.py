@@ -97,7 +97,6 @@ class MainWindow(QMainWindow):
         self.state = CalculatorState(self.engine, self.db, self._on_calculator_state_changed)
 
         self._init_ui()
-        self._apply_theme()
         self._switch_mode(saved_mode, save_config=False)
         register_context_provider(self._get_crash_context)
         record_breadcrumb("Lifecycle", f"MainWindow initialized with theme '{saved_theme}', mode '{saved_mode}'")
@@ -105,7 +104,7 @@ class MainWindow(QMainWindow):
         if is_testing:
             check_updates = False
         if check_updates:
-            self._start_version_check()
+            QTimer.singleShot(1000, self._start_version_check)
 
     def _init_ui(self):
         # Master root container holding TitleBar + Central Body
@@ -791,9 +790,15 @@ class MainWindow(QMainWindow):
             self.config.set("window_height", self.height(), auto_save=True)
         else:
             self.config.save()
-        if hasattr(self, "version_worker") and self.version_worker.isRunning():
-            self.version_worker.terminate()
-            self.version_worker.wait()
+        if hasattr(self, "version_worker") and self.version_worker:
+            try:
+                self.version_worker.checkCompleted.disconnect()
+            except Exception:
+                pass
+            if self.version_worker.isRunning():
+                self.version_worker.requestInterruption()
+                self.version_worker.quit()
+                self.version_worker.wait(50)
         if hasattr(self, "_native_event_filter") and self._native_event_filter:
             app = QApplication.instance()
             if app:
@@ -849,8 +854,6 @@ class MainWindow(QMainWindow):
         return ctx
 
     def _start_version_check(self):
-        if not is_connected_to_internet(timeout=1.5):
-            return
         self.version_worker = VersionCheckWorker(self)
         self.version_worker.checkCompleted.connect(self._on_version_check_result)
         self.version_worker.start()

@@ -188,7 +188,8 @@ class HistoryDrawer(QFrame):
 
         layout.addLayout(bottom_row)
 
-        self.refresh_history()
+        if self.isVisible():
+            self.refresh_history()
 
     def clear_rendered_cards(self):
         """Removes existing card widgets immediately from Qt widget tree to optimize layout and styling."""

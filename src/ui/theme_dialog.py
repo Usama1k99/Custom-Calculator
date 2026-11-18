@@ -35,6 +35,7 @@ from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
     VersionCheckWorker, BuildsFetchWorker, fetch_all_releases, BinaryDownloadWorker,
     apply_update_and_restart, is_license_entry, get_release_download_url, parse_semver,
+    normalize_version, get_version_status,
     VERSION_STATUS_FUNCTIONAL, VERSION_STATUS_NOT_RECOMMENDED, VERSION_STATUS_DEPRECATED,
     is_connected_to_internet
 )
@@ -395,12 +396,20 @@ class ThemeDialog(QDialog):
         apply_dialog_rounded_corners(self)
 
     def closeEvent(self, event):
-        if self._check_worker and self._check_worker.isRunning():
-            self._check_worker.terminate()
-            self._check_worker.wait(500)
-        if self._builds_worker and self._builds_worker.isRunning():
-            self._builds_worker.terminate()
-            self._builds_worker.wait(500)
+        for w in (self._check_worker, self._builds_worker):
+            if w:
+                try:
+                    w.checkCompleted.disconnect()
+                except Exception:
+                    pass
+                try:
+                    w.buildsFetched.disconnect()
+                except Exception:
+                    pass
+                if w.isRunning():
+                    w.requestInterruption()
+                    w.quit()
+                    w.wait(50)
         super().closeEvent(event)
 
     def _get_resize_edge(self, pos: QPoint):
@@ -786,55 +795,56 @@ class ThemeDialog(QDialog):
         layout.addLayout(actions_v)
         layout.addStretch()
 
-        # Initial internet access verification
-        if not is_connected_to_internet(timeout=1.5):
-            self.btn_check_updates.setEnabled(False)
-            self.builds_combo.setEnabled(False)
-            self.btn_install_selected.setEnabled(False)
-            self.update_status_lbl.setText("Not connected to internet.")
-
         return tab
 
     def _load_live_builds(self):
         """Fetches releases and commits live in the background and populates the build selector."""
-        if not is_connected_to_internet(timeout=1.5):
-            self.btn_check_updates.setEnabled(False)
-            self.builds_combo.setEnabled(False)
-            self.btn_install_selected.setEnabled(False)
-            self.update_status_lbl.setText("Not connected to internet.")
-            return
-
-        self.btn_check_updates.setEnabled(True)
-        self.builds_combo.setEnabled(True)
         self._builds_worker = BuildsFetchWorker()
         self._builds_worker.buildsFetched.connect(self._populate_builds_list)
         self._builds_worker.start()
 
     def _populate_builds_list(self, releases: list):
+        if not releases:
+            from src.core.updater import OFFICIAL_KNOWN_RELEASES
+            releases = [dict(kr) for kr in OFFICIAL_KNOWN_RELEASES]
+
         self.builds_combo.blockSignals(True)
         self.builds_combo.clear()
         found_current = False
         installed_idx = 0
+
+        # Identify latest release (highest semver)
+        valid_releases = [r for r in releases if not is_license_entry(r) and not r.get("draft", False)]
+        latest_tag = None
+        if valid_releases:
+            latest_rel = max(valid_releases, key=lambda r: parse_semver(r.get("tag_name", "")))
+            latest_tag = normalize_version(latest_rel.get("tag_name", ""))
 
         for rel in releases:
             if is_license_entry(rel):
                 continue
             tag = rel.get("tag_name", "Release")
             sha = rel.get("target_commitish", "")[:7]
-            is_curr = (tag.lstrip("v") == APP_VERSION)
+            norm_tag = normalize_version(tag)
+            is_curr = (norm_tag == normalize_version(APP_VERSION))
             if is_curr:
                 found_current = True
                 installed_idx = self.builds_combo.count()
             suffix = " (Installed Current)" if is_curr else ""
             status = rel.get("version_status", VERSION_STATUS_FUNCTIONAL)
             status_tag = f" [{status.replace('_', ' ').title()}]" if status != VERSION_STATUS_FUNCTIONAL else ""
-            self.builds_combo.addItem(f"{tag}{status_tag}{suffix}", rel)
+            latest_tag_label = " (latest release)" if (latest_tag and norm_tag == latest_tag) else ""
+            self.builds_combo.addItem(f"{tag}{status_tag}{latest_tag_label}{suffix}", rel)
 
         if not found_current:
+            is_latest = (latest_tag is None or parse_semver(APP_VERSION) >= parse_semver(latest_tag))
+            latest_tag_label = " (latest release)" if is_latest else ""
+            cur_status = get_version_status(APP_VERSION, releases)
+            cur_status_tag = f" [{cur_status.replace('_', ' ').title()}]" if cur_status != VERSION_STATUS_FUNCTIONAL else ""
             self.builds_combo.insertItem(
                 0,
-                f"v{APP_VERSION} (Installed Current)",
-                {"tag_name": f"v{APP_VERSION}", "body": "Active installation build.", "target_commitish": BUILD_COMMIT}
+                f"v{APP_VERSION}{cur_status_tag}{latest_tag_label} (Installed Current)",
+                {"tag_name": f"v{APP_VERSION}", "body": "Active installation build.", "target_commitish": BUILD_COMMIT, "version_status": cur_status}
             )
             installed_idx = 0
 
@@ -852,6 +862,12 @@ class ThemeDialog(QDialog):
         sha = data.get("target_commitish", "")[:7]
 
         desc_parts = [f"Version: {tag}"]
+        norm_v = normalize_version(tag)
+        valid_items = [self.builds_combo.itemData(i) for i in range(self.builds_combo.count()) if self.builds_combo.itemData(i)]
+        if valid_items:
+            max_tag = normalize_version(max(valid_items, key=lambda x: parse_semver(x.get("tag_name", ""))).get("tag_name", ""))
+            if norm_v == max_tag:
+                desc_parts.append("(latest release)")
         if sha:
             desc_parts.append(f"({sha})")
         if date:
@@ -1225,22 +1241,13 @@ class ThemeDialog(QDialog):
         super().reject()
 
     def _run_manual_update_check(self):
-        if not is_connected_to_internet(timeout=1.5):
-            self.btn_check_updates.setEnabled(False)
-            self.builds_combo.setEnabled(False)
-            self.btn_install_selected.setEnabled(False)
-            self.update_status_lbl.setText("Not connected to internet.")
-            return
-
         self.btn_check_updates.setEnabled(False)
         self.update_status_lbl.setText("Checking GitHub API for latest release...")
         self._check_worker = VersionCheckWorker()
 
         def on_finished(update_available: bool, release_info: dict):
+            self.btn_check_updates.setEnabled(True)
             if release_info.get("is_offline"):
-                self.btn_check_updates.setEnabled(False)
-                self.builds_combo.setEnabled(False)
-                self.btn_install_selected.setEnabled(False)
                 self.update_status_lbl.setText("Not connected to internet.")
                 return
 
