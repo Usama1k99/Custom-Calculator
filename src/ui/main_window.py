@@ -10,6 +10,7 @@ Replicates Windows Calculator UI/UX:
 - Robust hardware Numpad event handling
 """
 
+import os
 from pathlib import Path
 import sys
 from PyQt6.QtCore import Qt, QPoint, QSize, QTimer, QEvent
