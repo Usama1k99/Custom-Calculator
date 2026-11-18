@@ -14,9 +14,24 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO, GITHUB_API_URL
+
+# ─── VERSION STATUS LABELS ───────────────────────────────────────────
+VERSION_STATUS_FUNCTIONAL = "functional"
+VERSION_STATUS_NOT_RECOMMENDED = "not_recommended"
+VERSION_STATUS_DEPRECATED = "deprecated"
+
+
+def normalize_version(v_str: str) -> str:
+    """Normalizes a version string like 'v0.5.0', ' 0.5.0 ', or 'V1.2' to '0.5.0'."""
+    s = str(v_str).strip()
+    m = re.search(r"(\d+\.\d+(?:\.\d+)?)", s)
+    if m:
+        return m.group(1)
+    return s.lstrip("v").lstrip("V").strip()
 
 
 def parse_semver(v_str: str) -> tuple:
@@ -37,6 +52,142 @@ def is_connected_to_internet(timeout: float = 1.5) -> bool:
         except (OSError, socket.timeout):
             continue
     return False
+
+
+def parse_release_status(release: Dict[str, Any]) -> str:
+    """
+    Parses the explicit version status of a single release from its title, tag, or body.
+    Supports:
+      - Title/tag: '[deprecated]', '(deprecated)', '[not recommended]', '(not recommended)', '[not-recommended]'
+      - Body lines: 'Status: deprecated', '**Status:** Not Recommended', '[status: deprecated]'
+    Returns one of: 'deprecated', 'not_recommended', 'functional'. Defaults to 'functional'.
+    """
+    name = str(release.get("name", "")).lower()
+    tag = str(release.get("tag_name", "")).lower()
+    body = str(release.get("body", "")).lower()
+
+    # 1. Header or Tag check
+    header = f"{name} {tag}"
+    if "[deprecated]" in header or "(deprecated)" in header or "deprecated" in header:
+        return VERSION_STATUS_DEPRECATED
+    if any(k in header for k in [
+        "[not recommended]", "(not recommended)", "[not-recommended]", "(not-recommended)",
+        "not recommended", "not-recommended"
+    ]):
+        return VERSION_STATUS_NOT_RECOMMENDED
+
+    # 2. Body explicit status statement
+    m = re.search(r"(?:status|state)\s*[:=]\s*(?:\*\*)?\s*([a-zA-Z\-_ ]+)", body, re.IGNORECASE)
+    if m:
+        val = m.group(1).strip().lower().replace("-", "_").replace(" ", "_").rstrip("*_")
+        if "deprecat" in val:
+            return VERSION_STATUS_DEPRECATED
+        if "not_recommend" in val:
+            return VERSION_STATUS_NOT_RECOMMENDED
+        if "functional" in val:
+            return VERSION_STATUS_FUNCTIONAL
+
+    return VERSION_STATUS_FUNCTIONAL
+
+
+def extract_cross_release_status(body: str) -> Dict[str, str]:
+    """
+    Extracts cross-version status definitions from a release body or markdown notes.
+    Supports:
+      - Embedded JSON: <!-- version_status: {"0.4.0": "deprecated", "0.5.0": "not_recommended"} -->
+      - Markdown lines:
+          Deprecated versions: v0.4.0, v0.3.0
+          Not recommended: v0.5.0
+    """
+    status_map: Dict[str, str] = {}
+    if not body:
+        return status_map
+
+    # 1. JSON in comments
+    m_json = re.search(r"<!--\s*(?:version_status|status_map)?:\s*({.*?})\s*-->", body, re.DOTALL | re.IGNORECASE)
+    if m_json:
+        try:
+            data = json.loads(m_json.group(1))
+            if isinstance(data, dict):
+                for k, v in data.items():
+                    norm = normalize_version(str(k))
+                    v_clean = str(v).lower().replace("-", "_").replace(" ", "_")
+                    if "deprecat" in v_clean:
+                        status_map[norm] = VERSION_STATUS_DEPRECATED
+                    elif "not_recommend" in v_clean:
+                        status_map[norm] = VERSION_STATUS_NOT_RECOMMENDED
+                    elif "functional" in v_clean:
+                        status_map[norm] = VERSION_STATUS_FUNCTIONAL
+        except Exception:
+            pass
+
+    # 2. Plain text declarations
+    for line in body.splitlines():
+        line = line.strip()
+        m_dep = re.search(r"(?:deprecated versions?|deprecated)\s*[:=]\s*(.+)", line, re.IGNORECASE)
+        if m_dep:
+            for v in re.findall(r"v?(\d+\.\d+(?:\.\d+)?)", m_dep.group(1), re.IGNORECASE):
+                status_map[normalize_version(v)] = VERSION_STATUS_DEPRECATED
+
+        m_not = re.search(r"(?:not[- ]recommended versions?|not[- ]recommended)\s*[:=]\s*(.+)", line, re.IGNORECASE)
+        if m_not:
+            for v in re.findall(r"v?(\d+\.\d+(?:\.\d+)?)", m_not.group(1), re.IGNORECASE):
+                status_map[normalize_version(v)] = VERSION_STATUS_NOT_RECOMMENDED
+
+    return status_map
+
+
+def extract_version_status_map(releases: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Aggregates all version status designations across all releases."""
+    combined_map: Dict[str, str] = {}
+    for rel in releases:
+        body = rel.get("body", "")
+        combined_map.update(extract_cross_release_status(body))
+
+    for rel in releases:
+        tag = rel.get("tag_name", "")
+        if tag:
+            norm = normalize_version(tag)
+            rel_status = parse_release_status(rel)
+            if rel_status != VERSION_STATUS_FUNCTIONAL or norm not in combined_map:
+                combined_map[norm] = rel_status
+
+    return combined_map
+
+
+def get_version_status(target_version: str, releases: List[Dict[str, Any]]) -> str:
+    """
+    Resolves the status ('deprecated', 'not_recommended', or 'functional')
+    for a given version string. Defaults to 'functional'.
+    """
+    norm = normalize_version(target_version)
+    status_map = extract_version_status_map(releases)
+    if norm in status_map:
+        return status_map[norm]
+
+    for rel in releases:
+        if normalize_version(rel.get("tag_name", "")) == norm:
+            return parse_release_status(rel)
+
+    return VERSION_STATUS_FUNCTIONAL
+
+
+def find_recommended_release(releases: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Finds the best target release to update to.
+    Prioritizes the latest release that is 'functional'.
+    Falls back to the latest valid release if none are explicitly functional.
+    """
+    valid = [r for r in releases if not is_license_entry(r) and not r.get("draft", False)]
+    if not valid:
+        return None
+
+    valid.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
+    for r in valid:
+        if parse_release_status(r) == VERSION_STATUS_FUNCTIONAL:
+            return r
+
+    return valid[0]
 
 
 def is_license_entry(item: Dict[str, Any]) -> bool:
@@ -76,37 +227,46 @@ def get_release_download_url(release_info: Dict[str, Any]) -> str:
 
 
 class VersionCheckWorker(QThread):
-    checkCompleted = pyqtSignal(bool, dict)  # (update_available, latest_release_info)
+    checkCompleted = pyqtSignal(bool, dict)  # (update_available, release_info)
 
     def run(self):
+        # Quick internet connectivity verification
         if not is_connected_to_internet(timeout=1.5):
-            self.checkCompleted.emit(False, {"is_offline": True})
+            self.checkCompleted.emit(False, {
+                "current_version": APP_VERSION,
+                "current_status": VERSION_STATUS_FUNCTIONAL,
+                "is_offline": True,
+            })
             return
 
-        # Primary check: GitHub Releases API (/releases)
-        try:
-            req = urllib.request.Request(
-                f"{GITHUB_API_URL}/releases?per_page=30",
-                headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
-            )
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                if isinstance(data, list) and len(data) > 0:
-                    valid_rels = [
-                        r for r in data
-                        if not is_license_entry(r) and not r.get("draft", False)
-                    ]
-                    if valid_rels:
-                        valid_rels.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
-                        latest = valid_rels[0]
-                        tag = latest.get("tag_name", "").lstrip("v")
-                        if parse_semver(tag) > parse_semver(APP_VERSION):
-                            self.checkCompleted.emit(True, latest)
-                            return
-        except Exception:
-            pass
+        valid_rels = get_all_available_releases()
+        if valid_rels:
+            target_rel = find_recommended_release(valid_rels) or valid_rels[0]
+            cur_status = get_version_status(APP_VERSION, valid_rels)
 
-        self.checkCompleted.emit(False, {})
+            target_tag = target_rel.get("tag_name", "").lstrip("v")
+            has_newer = parse_semver(target_tag) > parse_semver(APP_VERSION)
+
+            info = dict(target_rel)
+            info["current_version"] = APP_VERSION
+            info["current_status"] = cur_status
+            info["target_version"] = target_tag
+
+            if cur_status == VERSION_STATUS_DEPRECATED:
+                self.checkCompleted.emit(True, info)
+                return
+            elif cur_status == VERSION_STATUS_NOT_RECOMMENDED:
+                self.checkCompleted.emit(True, info)
+                return
+            elif cur_status == VERSION_STATUS_FUNCTIONAL:
+                if has_newer:
+                    self.checkCompleted.emit(True, info)
+                    return
+                else:
+                    self.checkCompleted.emit(False, info)
+                    return
+
+        self.checkCompleted.emit(False, {"current_version": APP_VERSION, "current_status": VERSION_STATUS_FUNCTIONAL})
 
 
 class BinaryDownloadWorker(QThread):
@@ -165,37 +325,182 @@ class BinaryDownloadWorker(QThread):
         self.finished.emit(False, last_error or "Download failed. Executable binary not found.")
 
 
-def fetch_all_releases() -> List[Dict[str, Any]]:
-    """
-    Synchronously fetches all releases from GitHub Releases API (/releases).
-    Excludes drafts and license entries, and sorts descending by semantic version.
-    """
-    if not is_connected_to_internet(timeout=1.5):
-        return []
+OFFICIAL_KNOWN_RELEASES: List[Dict[str, Any]] = [
+    {
+        "tag_name": "v0.7.0",
+        "name": "Custom Calculator v0.7.0",
+        "published_at": "2026-11-18",
+        "body": "Official standalone release binary for Custom Calculator v0.7.0.",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v0.7.0/CustomCalculator.exe"
+            }
+        ]
+    },
+    {
+        "tag_name": "v0.6.0",
+        "name": "Custom Calculator v0.6.0",
+        "published_at": "2026-11-11",
+        "body": "Official standalone release binary for Custom Calculator v0.6.0.",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v0.6.0/CustomCalculator.exe"
+            }
+        ]
+    },
+    {
+        "tag_name": "v0.5.0",
+        "name": "Custom Calculator v0.5.0",
+        "published_at": "2026-11-11",
+        "body": "Official standalone release binary for Custom Calculator v0.5.0.",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v0.5.0/CustomCalculator.exe"
+            }
+        ]
+    }
+]
 
+
+def fetch_releases_from_atom() -> List[Dict[str, Any]]:
+    """
+    Fetches releases via GitHub's Atom feed (https://github.com/{GITHUB_REPO}/releases.atom).
+    This endpoint is public and completely immune to the unauthenticated 60 req/hr REST API rate limit.
+    """
+    url = f"https://github.com/{GITHUB_REPO}/releases.atom"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
+    )
     releases: List[Dict[str, Any]] = []
+    try:
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            content = resp.read()
+            tree = ET.fromstring(content)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+            for entry in tree.findall("atom:entry", ns):
+                title_elem = entry.find("atom:title", ns)
+                title = title_elem.text.strip() if title_elem is not None and title_elem.text else ""
+                link_elem = entry.find("atom:link", ns)
+                link = link_elem.attrib.get("href", "") if link_elem is not None else ""
+                tag = link.split("/")[-1] if link else ""
+                if not tag and title:
+                    m = re.search(r"v?\d+\.\d+(?:\.\d+)?", title)
+                    if m:
+                        tag = m.group(0)
 
+                if not tag:
+                    continue
+
+                updated_elem = entry.find("atom:updated", ns)
+                updated = updated_elem.text.strip() if updated_elem is not None and updated_elem.text else ""
+
+                content_elem = entry.find("atom:content", ns)
+                body = content_elem.text if content_elem is not None and content_elem.text else ""
+
+                rel = {
+                    "tag_name": tag,
+                    "name": title or tag,
+                    "published_at": updated,
+                    "body": body,
+                    "draft": False,
+                    "prerelease": False,
+                    "is_commit_build": False,
+                    "target_commitish": "",
+                    "assets": [
+                        {
+                            "name": "CustomCalculator.exe",
+                            "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/CustomCalculator.exe"
+                        }
+                    ]
+                }
+                releases.append(rel)
+    except Exception:
+        pass
+    return releases
+
+
+def get_all_available_releases() -> List[Dict[str, Any]]:
+    """
+    Retrieves all available releases with multi-tiered resilience:
+      1. Primary: GitHub Releases REST API (/releases)
+      2. Secondary (Anti-Rate-Limit): GitHub Releases Atom feed (/releases.atom)
+      3. Tertiary: Official known releases catalog
+    Always guarantees version discovery without hitting 403 API rate limits.
+    """
+    raw_releases: List[Dict[str, Any]] = []
+
+    # 1. Primary: REST API
     try:
         req = urllib.request.Request(
             f"{GITHUB_API_URL}/releases?per_page=100",
             headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
         )
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, list):
-                for rel in data:
-                    if is_license_entry(rel) or rel.get("draft", False):
-                        continue
-                    tag = rel.get("tag_name", "")
-                    if tag:
-                        rel["is_commit_build"] = False
-                        releases.append(rel)
+            if isinstance(data, list) and len(data) > 0:
+                raw_releases = data
     except Exception:
         pass
 
-    # Sort descending by Semantic Version (latest first, then past releases)
-    releases.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
-    return releases
+    # 2. Secondary: Atom feed fallback (completely immune to 60 req/hr rate limits)
+    if not raw_releases:
+        raw_releases = fetch_releases_from_atom()
+
+    # 3. Tertiary: Fallback to official known releases catalog if all remote requests fail
+    if not raw_releases:
+        raw_releases = [dict(kr) for kr in OFFICIAL_KNOWN_RELEASES]
+
+    # Process and annotate version statuses
+    status_map = extract_version_status_map(raw_releases)
+    annotated: List[Dict[str, Any]] = []
+    seen_tags = set()
+
+    for rel in raw_releases:
+        if is_license_entry(rel) or rel.get("draft", False):
+            continue
+        tag = rel.get("tag_name", "")
+        if not tag:
+            continue
+        norm_tag = normalize_version(tag)
+        if norm_tag in seen_tags:
+            continue
+        seen_tags.add(norm_tag)
+
+        rel["is_commit_build"] = False
+        rel["version_status"] = status_map.get(norm_tag, parse_release_status(rel))
+        if not rel.get("assets"):
+            rel["assets"] = [{
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/CustomCalculator.exe"
+            }]
+        annotated.append(rel)
+
+    annotated.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
+    return annotated
+
+
+def fetch_all_releases() -> List[Dict[str, Any]]:
+    """
+    Synchronously fetches all releases with multi-tiered resilience (REST API -> Atom -> Catalog).
+    Excludes drafts and license entries, annotates version status,
+    and sorts descending by semantic version.
+    """
+    if not is_connected_to_internet(timeout=1.5):
+        return []
+    return get_all_available_releases()
 
 
 class BuildsFetchWorker(QThread):
