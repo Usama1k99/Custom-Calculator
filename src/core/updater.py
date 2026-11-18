@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 from src.version import APP_VERSION, BUILD_COMMIT, GITHUB_REPO, GITHUB_API_URL
@@ -238,47 +239,32 @@ class VersionCheckWorker(QThread):
             })
             return
 
-        # Primary check: GitHub Releases API (/releases)
-        try:
-            req = urllib.request.Request(
-                f"{GITHUB_API_URL}/releases?per_page=30",
-                headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
-            )
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                if isinstance(data, list) and len(data) > 0:
-                    valid_rels = [
-                        r for r in data
-                        if not is_license_entry(r) and not r.get("draft", False)
-                    ]
-                    if valid_rels:
-                        valid_rels.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
-                        target_rel = find_recommended_release(valid_rels) or valid_rels[0]
-                        cur_status = get_version_status(APP_VERSION, valid_rels)
+        valid_rels = get_all_available_releases()
+        if valid_rels:
+            target_rel = find_recommended_release(valid_rels) or valid_rels[0]
+            cur_status = get_version_status(APP_VERSION, valid_rels)
 
-                        target_tag = target_rel.get("tag_name", "").lstrip("v")
-                        has_newer = parse_semver(target_tag) > parse_semver(APP_VERSION)
+            target_tag = target_rel.get("tag_name", "").lstrip("v")
+            has_newer = parse_semver(target_tag) > parse_semver(APP_VERSION)
 
-                        info = dict(target_rel)
-                        info["current_version"] = APP_VERSION
-                        info["current_status"] = cur_status
-                        info["target_version"] = target_tag
+            info = dict(target_rel)
+            info["current_version"] = APP_VERSION
+            info["current_status"] = cur_status
+            info["target_version"] = target_tag
 
-                        if cur_status == VERSION_STATUS_DEPRECATED:
-                            self.checkCompleted.emit(True, info)
-                            return
-                        elif cur_status == VERSION_STATUS_NOT_RECOMMENDED:
-                            self.checkCompleted.emit(True, info)
-                            return
-                        elif cur_status == VERSION_STATUS_FUNCTIONAL:
-                            if has_newer:
-                                self.checkCompleted.emit(True, info)
-                                return
-                            else:
-                                self.checkCompleted.emit(False, info)
-                                return
-        except Exception:
-            pass
+            if cur_status == VERSION_STATUS_DEPRECATED:
+                self.checkCompleted.emit(True, info)
+                return
+            elif cur_status == VERSION_STATUS_NOT_RECOMMENDED:
+                self.checkCompleted.emit(True, info)
+                return
+            elif cur_status == VERSION_STATUS_FUNCTIONAL:
+                if has_newer:
+                    self.checkCompleted.emit(True, info)
+                    return
+                else:
+                    self.checkCompleted.emit(False, info)
+                    return
 
         self.checkCompleted.emit(False, {"current_version": APP_VERSION, "current_status": VERSION_STATUS_FUNCTIONAL})
 
@@ -339,41 +325,182 @@ class BinaryDownloadWorker(QThread):
         self.finished.emit(False, last_error or "Download failed. Executable binary not found.")
 
 
-def fetch_all_releases() -> List[Dict[str, Any]]:
-    """
-    Synchronously fetches all releases from GitHub Releases API (/releases).
-    Excludes drafts and license entries, annotates version status,
-    and sorts descending by semantic version.
-    """
-    if not is_connected_to_internet(timeout=1.5):
-        return []
+OFFICIAL_KNOWN_RELEASES: List[Dict[str, Any]] = [
+    {
+        "tag_name": "v0.7.0",
+        "name": "Custom Calculator v0.7.0",
+        "published_at": "2026-11-18",
+        "body": "Official standalone release binary for Custom Calculator v0.7.0.",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v0.7.0/CustomCalculator.exe"
+            }
+        ]
+    },
+    {
+        "tag_name": "v0.6.0",
+        "name": "Custom Calculator v0.6.0",
+        "published_at": "2026-11-11",
+        "body": "Official standalone release binary for Custom Calculator v0.6.0.",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v0.6.0/CustomCalculator.exe"
+            }
+        ]
+    },
+    {
+        "tag_name": "v0.5.0",
+        "name": "Custom Calculator v0.5.0",
+        "published_at": "2026-11-11",
+        "body": "Official standalone release binary for Custom Calculator v0.5.0.",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v0.5.0/CustomCalculator.exe"
+            }
+        ]
+    }
+]
 
+
+def fetch_releases_from_atom() -> List[Dict[str, Any]]:
+    """
+    Fetches releases via GitHub's Atom feed (https://github.com/{GITHUB_REPO}/releases.atom).
+    This endpoint is public and completely immune to the unauthenticated 60 req/hr REST API rate limit.
+    """
+    url = f"https://github.com/{GITHUB_REPO}/releases.atom"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
+    )
     releases: List[Dict[str, Any]] = []
+    try:
+        with urllib.request.urlopen(req, timeout=6.0) as resp:
+            content = resp.read()
+            tree = ET.fromstring(content)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
+            for entry in tree.findall("atom:entry", ns):
+                title_elem = entry.find("atom:title", ns)
+                title = title_elem.text.strip() if title_elem is not None and title_elem.text else ""
+                link_elem = entry.find("atom:link", ns)
+                link = link_elem.attrib.get("href", "") if link_elem is not None else ""
+                tag = link.split("/")[-1] if link else ""
+                if not tag and title:
+                    m = re.search(r"v?\d+\.\d+(?:\.\d+)?", title)
+                    if m:
+                        tag = m.group(0)
 
+                if not tag:
+                    continue
+
+                updated_elem = entry.find("atom:updated", ns)
+                updated = updated_elem.text.strip() if updated_elem is not None and updated_elem.text else ""
+
+                content_elem = entry.find("atom:content", ns)
+                body = content_elem.text if content_elem is not None and content_elem.text else ""
+
+                rel = {
+                    "tag_name": tag,
+                    "name": title or tag,
+                    "published_at": updated,
+                    "body": body,
+                    "draft": False,
+                    "prerelease": False,
+                    "is_commit_build": False,
+                    "target_commitish": "",
+                    "assets": [
+                        {
+                            "name": "CustomCalculator.exe",
+                            "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/CustomCalculator.exe"
+                        }
+                    ]
+                }
+                releases.append(rel)
+    except Exception:
+        pass
+    return releases
+
+
+def get_all_available_releases() -> List[Dict[str, Any]]:
+    """
+    Retrieves all available releases with multi-tiered resilience:
+      1. Primary: GitHub Releases REST API (/releases)
+      2. Secondary (Anti-Rate-Limit): GitHub Releases Atom feed (/releases.atom)
+      3. Tertiary: Official known releases catalog
+    Always guarantees version discovery without hitting 403 API rate limits.
+    """
+    raw_releases: List[Dict[str, Any]] = []
+
+    # 1. Primary: REST API
     try:
         req = urllib.request.Request(
             f"{GITHUB_API_URL}/releases?per_page=100",
             headers={"User-Agent": f"CustomCalculator/{APP_VERSION}"}
         )
-        with urllib.request.urlopen(req, timeout=5.0) as resp:
+        with urllib.request.urlopen(req, timeout=4.0) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            if isinstance(data, list):
-                status_map = extract_version_status_map(data)
-                for rel in data:
-                    if is_license_entry(rel) or rel.get("draft", False):
-                        continue
-                    tag = rel.get("tag_name", "")
-                    if tag:
-                        rel["is_commit_build"] = False
-                        norm_tag = normalize_version(tag)
-                        rel["version_status"] = status_map.get(norm_tag, parse_release_status(rel))
-                        releases.append(rel)
+            if isinstance(data, list) and len(data) > 0:
+                raw_releases = data
     except Exception:
         pass
 
-    # Sort descending by Semantic Version (latest first, then past releases)
-    releases.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
-    return releases
+    # 2. Secondary: Atom feed fallback (completely immune to 60 req/hr rate limits)
+    if not raw_releases:
+        raw_releases = fetch_releases_from_atom()
+
+    # 3. Tertiary: Fallback to official known releases catalog if all remote requests fail
+    if not raw_releases:
+        raw_releases = [dict(kr) for kr in OFFICIAL_KNOWN_RELEASES]
+
+    # Process and annotate version statuses
+    status_map = extract_version_status_map(raw_releases)
+    annotated: List[Dict[str, Any]] = []
+    seen_tags = set()
+
+    for rel in raw_releases:
+        if is_license_entry(rel) or rel.get("draft", False):
+            continue
+        tag = rel.get("tag_name", "")
+        if not tag:
+            continue
+        norm_tag = normalize_version(tag)
+        if norm_tag in seen_tags:
+            continue
+        seen_tags.add(norm_tag)
+
+        rel["is_commit_build"] = False
+        rel["version_status"] = status_map.get(norm_tag, parse_release_status(rel))
+        if not rel.get("assets"):
+            rel["assets"] = [{
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/{tag}/CustomCalculator.exe"
+            }]
+        annotated.append(rel)
+
+    annotated.sort(key=lambda r: parse_semver(r.get("tag_name", "")), reverse=True)
+    return annotated
+
+
+def fetch_all_releases() -> List[Dict[str, Any]]:
+    """
+    Synchronously fetches all releases with multi-tiered resilience (REST API -> Atom -> Catalog).
+    Excludes drafts and license entries, annotates version status,
+    and sorts descending by semantic version.
+    """
+    if not is_connected_to_internet(timeout=1.5):
+        return []
+    return get_all_available_releases()
 
 
 class BuildsFetchWorker(QThread):

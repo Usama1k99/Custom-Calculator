@@ -40,5 +40,54 @@ class TestUpdaterOffline(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0], [])
 
+    def test_rate_limit_atom_fallback(self):
+        from src.core.updater import fetch_all_releases
+        import urllib.error
+
+        atom_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <title>Custom Calculator v0.7.0</title>
+    <updated>2026-11-18T14:36:53Z</updated>
+    <link href="https://github.com/Usama1k99/Custom-Calculator/releases/tag/v0.7.0"/>
+    <content>Release notes</content>
+  </entry>
+</feed>"""
+
+        def mock_urlopen(req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "api.github.com" in url:
+                raise urllib.error.HTTPError(url, 403, "rate limit exceeded", {}, None)
+            elif "releases.atom" in url:
+                class MockResp:
+                    def read(self):
+                        return atom_xml
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        pass
+                return MockResp()
+            raise urllib.error.URLError("Not found")
+
+        with patch("src.core.updater.is_connected_to_internet", return_value=True), \
+             patch("src.core.updater.urllib.request.urlopen", side_effect=mock_urlopen):
+            rels = fetch_all_releases()
+            self.assertEqual(len(rels), 1)
+            self.assertEqual(rels[0]["tag_name"], "v0.7.0")
+
+    def test_all_remote_fail_catalog_fallback(self):
+        from src.core.updater import fetch_all_releases
+        import urllib.error
+
+        with patch("src.core.updater.is_connected_to_internet", return_value=True), \
+             patch("src.core.updater.urllib.request.urlopen", side_effect=urllib.error.HTTPError("url", 403, "rate limit", {}, None)):
+            rels = fetch_all_releases()
+            # Falls back to OFFICIAL_KNOWN_RELEASES
+            self.assertGreaterEqual(len(rels), 3)
+            tags = [r["tag_name"] for r in rels]
+            self.assertIn("v0.7.0", tags)
+            self.assertIn("v0.6.0", tags)
+            self.assertIn("v0.5.0", tags)
+
 if __name__ == "__main__":
     unittest.main()

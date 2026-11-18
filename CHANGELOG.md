@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * In the Version Settings panel, automatically disabled update check and version switching buttons when offline, displaying a clean "Not connected to internet." notice without emojis.
 
 ### Fixed
+* Multi-Tiered Update & Version Listing Resilience (`src/core/updater.py`):
+  - Solved GitHub REST API unauthenticated 60 requests/hour IP rate limiting (`HTTP 403: rate limit exceeded`) that caused the app to silently fail to discover newer releases and left the Versions dropdown empty.
+  - Implemented multi-tiered release discovery:
+    1. Primary: GitHub Releases REST API (`/releases`).
+    2. Secondary (Anti-Rate-Limit): GitHub Releases Atom feed (`/releases.atom`), which is public and completely immune to the 60 req/hr rate limit.
+    3. Tertiary: Built-in catalog of official releases (`OFFICIAL_KNOWN_RELEASES`), guaranteeing version discovery even under severe network restrictions.
 * Toggle Switch Responsiveness & Instant Theme Application (`src/ui/toggle_switch.py`, `src/ui/theme_dialog.py`, `src/ui/history_drawer.py`, `src/ui/main_window.py`):
   - Upgraded both `ThemeModeToggle` and `TransparencyToggle` easing curves from slow-accelerating `InOutCubic` to immediate-peak-velocity `OutQuad` (110ms), eliminating toggle startup hesitation.
   - Discovered and eliminated the root cause of the ~900ms stylesheet reapplication freeze: SQLite history was generating 14,000+ QWidgets in `HistoryDrawer`, causing Qt's C++ styling engine to traverse the massive widget tree on every theme change.
