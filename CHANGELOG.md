@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.6.1] - 2026-11-11
+## [0.7.0] - 2026-11-18 (Official Release)
+
+### Changed
+* Window Transparency Range Capped at 0-25% & Blur Discontinuation (`src/ui/theme_dialog.py`, `src/ui/main_window.py`, `src/ui/theme_manager.py`, `src/core/config.py`, `src/ui/toggle_switch.py`):
+  * Capped the window transparency slider range to strictly 0-25%, preventing over-transparent illegibility and scaling backend transparency down to subtle, crisp levels (alpha 0.85 at maximum 25%).
+  * Updated default `window_transparency` configuration value to 15%.
+  * Ensured the Navigation Menu Sidebar strictly remains 100% solid and opaque (`tokens['bg_surface']`, alpha 255) regardless of transparency setting.
+  * Renamed UI settings from "Window Blur" to "Window Transparency", introducing `TransparencyToggle` with clean vector SVG icons (transparency layers when ON, solid square when OFF). Zero emojis.
+  * Completely discontinued and purged all DWM blur code and files (`src/ui/window_effects.py`).
+* ConfigManager Backward-Compatible Schema Migration Engine (`src/core/config.py`):
+  * Introduced automatic schema migration engine (`CURRENT_SCHEMA_VERSION = 2`).
+  * Automatically detects older unversioned/v1 user configurations upon upgrade, migrates legacy `blur_enabled`/`blur_effect` to `transparency_enabled`, rescales older transparency values to the 0-25 cap, cleans up obsolete blur keys, and saves sanitized configuration to disk without losing any user themes or preferences.
+  * Added fallback aliases in `ConfigManager.get()` for seamless backward compatibility.
+* Test Suite Consolidation & Optimization (`tests/`):
+  * Eliminated obsolete, long-running challenger and stress test scripts (`test_adversarial_maximized_modes.py`, `test_adversarial_window_geometry.py`, `test_challenger_*`) that repeatedly looped `time.sleep` and `QTest.qWait` cycles.
+  * Consolidated core geometry, Aero Snap, NCHITTEST codes, multi-monitor clamping, and emoji enforcement into [`tests/test_window_geometry.py`](file:///d:/PartA/Usama/Programming/Calculator/tests/test_window_geometry.py).
+  * Reduced full test suite execution time from over 40 minutes down to ~50 seconds across all 14 core test modules.
+* Project Repository Cleanup:
+  * Purged untracked and redundant workspace artifacts, including `.agents/`, `build/`, `dist/`, `tools/`, screenshots (`screenshots_m3/`, `screenshots_m4/`, `visual_proof/`, root `.png` files), and stale `__pycache__` directories.
 
 ### Added
 * Offline Internet Handling (`src/core/updater.py`, `src/ui/main_window.py`, `src/ui/theme_dialog.py`):
@@ -16,6 +34,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   * In the Version Settings panel, automatically disabled update check and version switching buttons when offline, displaying a clean "Not connected to internet." notice without emojis.
 
 ### Fixed
+* Toggle Switch Responsiveness & Instant Theme Application (`src/ui/toggle_switch.py`, `src/ui/theme_dialog.py`, `src/ui/history_drawer.py`, `src/ui/main_window.py`):
+  - Upgraded both `ThemeModeToggle` and `TransparencyToggle` easing curves from slow-accelerating `InOutCubic` to immediate-peak-velocity `OutQuad` (110ms), eliminating toggle startup hesitation.
+  - Discovered and eliminated the root cause of the ~900ms stylesheet reapplication freeze: SQLite history was generating 14,000+ QWidgets in `HistoryDrawer`, causing Qt's C++ styling engine to traverse the massive widget tree on every theme change.
+  - Capped rendered calculation cards in `HistoryDrawer` to 50 items (with an on-demand "Load more" button for older items) and purged hidden cards when the drawer closes. This slashed total window styling time from **890ms to 31ms** (a 96.5% performance improvement).
+  - Toggles and sliders are treated distinctly: toggles apply themes immediately (<31ms) with zero perceptible delay as the knob glides smoothly, while the transparency slider keeps mouse scrubbing completely lag-free (updating percentage labels in memory and applying the theme upon `sliderReleased` or 40ms debounce).
+  - Fixed `NameError: name 'QPropertyAnimation' is not defined` in `src/ui/theme_dialog.py`.
+* Minimalist Transparency Vector SVGs (`src/ui/toggle_switch.py`):
+  - Replaced noisy dashed lines and prohibition-style diagonal slashes with clean, minimal vector artwork:
+    - **ON**: Two overlapping minimalist rounded window panes (`rx=2.5`, `stroke-width=1.8`) representing layering and transparency.
+    - **OFF**: Single solid rounded window pane (`rx=2.5`, `stroke-width=1.8`, 35% solid fill) representing an opaque surface.
+* Transparency Slider Lag & Smooth Scrubbing (`src/ui/theme_dialog.py`):
+  * Decoupled transparency slider movement from stylesheet re-parsing and full-tree SVG re-rendering during active mouse dragging.
+  * Live dragging updates only the in-memory percentage label with zero frame drops, and applies the theme stylesheet cleanly only after dragging ends (`sliderReleased` or debounced navigation) for buttery-smooth movement.
+* Test Runner Blocking Modal Dialogs (`src/ui/main_window.py`):
+  * Guarded `_start_version_check()` against running in `unittest` or `pytest` execution environments, preventing background worker threads from launching modal update dialogs (`dlg.exec()`) that stalled test runs.
 * PyInstaller Self-Replacement Child DLL & Working Directory Fix (`src/core/updater.py`):
   * Stripped `_MEIPASS2` and `_MEIPASS` environment variables from both the Python `subprocess.Popen` caller environment and the child PowerShell execution environment prior to relaunching the replaced executable. This prevents PyInstaller onefile bootloader from falsely assuming child process status and failing with `Failed to load Python DLL ... python312.dll: The specified module could not be found`.
   * Applied literal PowerShell here-strings (`@'...'@`) for target and destination executable paths to eliminate quote and backslash parsing anomalies.

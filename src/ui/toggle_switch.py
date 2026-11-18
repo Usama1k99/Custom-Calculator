@@ -56,11 +56,13 @@ class ThemeModeToggle(QWidget):
         self._is_dark = is_dark
         end_val = 1.0 if is_dark else 0.0
         if animate:
+            if hasattr(self, "_anim") and self._anim.state() == QPropertyAnimation.State.Running:
+                self._anim.stop()
             self._anim = QPropertyAnimation(self, b"offset")
-            self._anim.setDuration(160)
+            self._anim.setDuration(110)
             self._anim.setStartValue(self._offset)
             self._anim.setEndValue(end_val)
-            self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            self._anim.setEasingCurve(QEasingCurve.Type.OutQuad)
             self._anim.start()
         else:
             self._offset = end_val
@@ -135,18 +137,19 @@ class ThemeModeToggle(QWidget):
         painter.end()
 
 
-class BlurEffectToggle(QWidget):
+class TransparencyToggle(QWidget):
     """
     iOS / Fluent styled pill toggle switch with smooth animated sliding thumb,
-    rendering Frosted / Blur sparkle vector icon on the left (ON) and
-    Solid / Disabled vector icon on the right (OFF). Zero emojis.
+    rendering Transparency layers vector icon on the left (ON) and
+    Solid / Opaque vector icon on the right (OFF). Zero emojis.
     """
-    blurToggled = pyqtSignal(bool)  # Emits True for blur enabled, False for solid
+    transparencyToggled = pyqtSignal(bool)  # Emits True for transparency enabled, False for solid
+    blurToggled = transparencyToggled       # Backward compatibility alias
 
-    def __init__(self, is_blur: bool = True, parent=None):
+    def __init__(self, is_transparency: bool = True, parent=None):
         super().__init__(parent)
-        self._is_blur = is_blur
-        self._offset = 1.0 if is_blur else 0.0
+        self._is_transparency = is_transparency
+        self._offset = 1.0 if is_transparency else 0.0
         self._accent_color = "#F92672"
         self._bg_off_track = "#4B5563"
         self.setFixedSize(64, 32)
@@ -154,14 +157,16 @@ class BlurEffectToggle(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # SVG Renderers for crisp vector icons (zero emojis)
-        blur_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>
+        # Transparency ON: Overlapping minimalist window panes (clean layering)
+        trans_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="7" y="7" width="13" height="13" rx="2.5"/>
+  <path d="M17 7V5.5A2.5 2.5 0 0 0 14.5 3h-9A2.5 2.5 0 0 0 3 5.5v9A2.5 2.5 0 0 0 5.5 17H7"/>
 </svg>"""
-        solid_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#9CA3AF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <circle cx="12" cy="12" r="8"/>
-  <line x1="6.3" y1="6.3" x2="17.7" y2="17.7"/>
+        # Transparency OFF (Solid): Single solid opaque window pane (clean minimalist surface)
+        solid_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#9CA3AF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4.5" y="4.5" width="15" height="15" rx="2.5" fill="#9CA3AF" fill-opacity="0.35"/>
 </svg>"""
-        self._blur_renderer = QSvgRenderer(QByteArray(blur_svg.encode("utf-8")))
+        self._trans_renderer = QSvgRenderer(QByteArray(trans_svg.encode("utf-8")))
         self._solid_renderer = QSvgRenderer(QByteArray(solid_svg.encode("utf-8")))
 
     def set_accent_color(self, hex_color: str):
@@ -181,33 +186,41 @@ class BlurEffectToggle(QWidget):
         self._offset = max(0.0, min(1.0, val))
         self.update()
 
-    def is_blur(self) -> bool:
-        return self._is_blur
+    def is_transparency(self) -> bool:
+        return self._is_transparency
 
-    def set_blur(self, is_blur: bool, animate: bool = True):
-        if self._is_blur == is_blur and animate:
+    def is_blur(self) -> bool:
+        return self.is_transparency()
+
+    def set_transparency(self, is_transparency: bool, animate: bool = True):
+        if self._is_transparency == is_transparency and animate:
             return
-        self._is_blur = is_blur
-        end_val = 1.0 if is_blur else 0.0
+        self._is_transparency = is_transparency
+        end_val = 1.0 if is_transparency else 0.0
         if animate:
+            if hasattr(self, "_anim") and self._anim.state() == QPropertyAnimation.State.Running:
+                self._anim.stop()
             self._anim = QPropertyAnimation(self, b"offset")
-            self._anim.setDuration(160)
+            self._anim.setDuration(110)
             self._anim.setStartValue(self._offset)
             self._anim.setEndValue(end_val)
-            self._anim.setEasingCurve(QEasingCurve.Type.InOutCubic)
+            self._anim.setEasingCurve(QEasingCurve.Type.OutQuad)
             self._anim.start()
         else:
             self._offset = end_val
             self.update()
-        self.blurToggled.emit(is_blur)
+        self.transparencyToggled.emit(is_transparency)
+
+    def set_blur(self, is_blur: bool, animate: bool = True):
+        self.set_transparency(is_blur, animate)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.set_blur(not self._is_blur)
+            self.set_transparency(not self._is_transparency)
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key.Key_Space, Qt.Key.Key_Return):
-            self.set_blur(not self._is_blur)
+            self.set_transparency(not self._is_transparency)
         else:
             super().keyPressEvent(event)
 
@@ -238,13 +251,13 @@ class BlurEffectToggle(QWidget):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), radius, radius)
 
-        # Render Blur sparkle icon on the left (revealed when thumb is on the right in Blur ON)
-        blur_rect = QRectF(9, (h - 16) / 2.0, 16, 16)
+        # Render Transparency layers icon on the left (revealed when thumb is on the right)
+        trans_rect = QRectF(9.5, (h - 15) / 2.0, 15, 15)
         painter.setOpacity(max(0.0, min(1.0, (self._offset - 0.2) / 0.8)))
-        self._blur_renderer.render(painter, blur_rect)
+        self._trans_renderer.render(painter, trans_rect)
 
-        # Render Solid icon on the right (revealed when thumb is on the left in Blur OFF)
-        solid_rect = QRectF(w - 25, (h - 14) / 2.0, 14, 14)
+        # Render Solid icon on the right (revealed when thumb is on the left)
+        solid_rect = QRectF(w - 24.5, (h - 15) / 2.0, 15, 15)
         painter.setOpacity(max(0.0, min(1.0, (0.8 - self._offset) / 0.8)))
         self._solid_renderer.render(painter, solid_rect)
 
@@ -267,3 +280,7 @@ class BlurEffectToggle(QWidget):
         painter.drawEllipse(QRectF(thumb_x, thumb_y, thumb_diameter, thumb_diameter))
 
         painter.end()
+
+
+# Backward compatibility alias
+BlurEffectToggle = TransparencyToggle

@@ -334,53 +334,73 @@ class ThemeManager:
                 pass
         return hex_val
 
-    def generate_qss(self, blur_enabled: bool = True, window_transparency: Optional[int] = None) -> str:
+    def generate_qss(
+        self,
+        transparency_enabled: bool = True,
+        window_transparency: Optional[int] = None,
+        blur_enabled: Optional[bool] = None
+    ) -> str:
         """
         Builds the refined Windows Calculator-style stylesheet with theme-reactive SVGs.
-        window_transparency is percentage (0..100), default 60 (slightly increased transparency).
+        window_transparency is percentage (0..25 capped), default 15.
         """
+        if blur_enabled is not None:
+            transparency_enabled = blur_enabled
+
         t = self.current_tokens
         is_dark = t.get("category", "dark") == "dark"
 
         if window_transparency is None:
             try:
                 from src.core.config import ConfigManager
-                window_transparency = ConfigManager().get("window_transparency", 60)
+                window_transparency = ConfigManager().get("window_transparency", 15)
             except Exception:
-                window_transparency = 60
+                window_transparency = 15
 
-        if blur_enabled:
-            # Transparency range 0 (opaque) to 100 (fully transparent glass)
-            trans_pct = max(0, min(100, window_transparency))
-            # Minimum alpha of 0.08 (20/255) prevents Windows DWM from treating 100% transparency as click-through on empty areas
-            base_alpha = max(0.08, (100.0 - trans_pct) / 100.0)
-            if not is_dark and base_alpha > 0.08:
-                base_alpha = min(1.0, base_alpha + 0.04)
+        if transparency_enabled:
+            # Full functional 0-25 transparency scale:
+            # 0 = completely opaque (0% transparent, alpha 1.0)
+            # 25 = maximum subtle transparency (capped at 25%, alpha 0.85)
+            trans_val = max(0, min(25, window_transparency))
+            ratio = trans_val / 25.0  # Functional 0.0 to 1.0
+            base_alpha = max(0.85, 1.0 - (ratio * 0.15))
+            if not is_dark and base_alpha > 0.85:
+                base_alpha = min(1.0, base_alpha + 0.02)
 
             bg_window = self._hex_to_rgba(t['bg_base'], base_alpha)
-            bg_num = self._hex_to_rgba(t['bg_card'], min(0.95, base_alpha * 1.05 + 0.08))
-            bg_num_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.95, base_alpha * 1.40 + 0.15))
-            bg_num_active = self._hex_to_rgba(t['bg_card_active'], min(0.98, base_alpha * 1.70 + 0.25))
-            bg_op = self._hex_to_rgba(t['bg_op'], min(0.92, base_alpha * 0.95 + 0.08))
-            bg_op_hover = self._hex_to_rgba(t['bg_op_hover'], min(0.95, base_alpha * 1.35 + 0.15))
-            bg_op_active = self._hex_to_rgba(t.get('bg_op_active', t.get('bg_card_active', t['bg_op'])), min(0.98, base_alpha * 1.65 + 0.25))
-            bg_fn = self._hex_to_rgba(t['bg_fn'], min(0.90, base_alpha * 0.90 + 0.08))
-            bg_fn_hover = self._hex_to_rgba(t['bg_fn_hover'], min(0.95, base_alpha * 1.30 + 0.15))
+            bg_num = self._hex_to_rgba(t['bg_card'], min(0.95, base_alpha * 1.05 + 0.04))
+            bg_num_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.96, base_alpha * 1.15 + 0.05))
+            bg_num_active = self._hex_to_rgba(t['bg_card_active'], min(0.98, base_alpha * 1.25 + 0.05))
+            bg_op = self._hex_to_rgba(t['bg_op'], min(0.94, base_alpha * 0.98 + 0.04))
+            bg_op_hover = self._hex_to_rgba(t['bg_op_hover'], min(0.96, base_alpha * 1.15 + 0.05))
+            bg_op_active = self._hex_to_rgba(t.get('bg_op_active', t.get('bg_card_active', t['bg_op'])), min(0.98, base_alpha * 1.25 + 0.05))
+            bg_fn = self._hex_to_rgba(t['bg_fn'], min(0.92, base_alpha * 0.95 + 0.04))
+            bg_fn_hover = self._hex_to_rgba(t['bg_fn_hover'], min(0.96, base_alpha * 1.15 + 0.05))
             border_key = "rgba(255, 255, 255, 0.08)" if is_dark else "rgba(0, 0, 0, 0.08)"
             border_window = "1px solid rgba(255, 255, 255, 0.12)" if is_dark else "1px solid rgba(0, 0, 0, 0.10)"
-            bg_overlay = self._hex_to_rgba(t['bg_surface'], min(0.96, base_alpha + 0.35))
-            bg_history_drawer = self._hex_to_rgba(t['bg_base'], min(0.92, base_alpha * 0.95 + 0.08))
-            bg_history_card = self._hex_to_rgba(t['bg_card'], min(0.88, base_alpha * 1.05 + 0.08))
-            bg_history_card_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.92, base_alpha * 1.35 + 0.15))
-            bg_history_pill = self._hex_to_rgba(t['bg_surface'], min(0.85, base_alpha * 0.95 + 0.10))
+            bg_overlay = self._hex_to_rgba(t['bg_surface'], min(0.96, base_alpha + 0.10))
+            bg_history_drawer = self._hex_to_rgba(t['bg_base'], min(0.94, base_alpha * 0.98 + 0.04))
+            bg_history_card = self._hex_to_rgba(t['bg_card'], min(0.92, base_alpha * 1.05 + 0.04))
+            bg_history_card_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.95, base_alpha * 1.15 + 0.05))
+            bg_history_pill = self._hex_to_rgba(t['bg_surface'], min(0.90, base_alpha * 0.98 + 0.05))
         else:
-            # When blur is off: STRICTLY OPAQUE (no transparency applied)
+            # When transparency is off: STRICTLY OPAQUE (no transparency applied)
             bg_window = t['bg_base']
             bg_num = t['bg_card']
             bg_num_hover = t['bg_card_hover']
             bg_num_active = t['bg_card_active']
             bg_op = t['bg_op']
             bg_op_hover = t['bg_op_hover']
+            bg_op_active = t.get('bg_op_active', t.get('bg_card_active', t['bg_op']))
+            bg_fn = t['bg_fn']
+            bg_fn_hover = t['bg_fn_hover']
+            border_key = t['border_subtle']
+            border_window = "none"
+            bg_overlay = t['bg_surface']
+            bg_history_drawer = t['bg_surface']
+            bg_history_card = t['bg_card']
+            bg_history_card_hover = t['bg_card_hover']
+            bg_history_pill = t['bg_surface']
             bg_op_active = t.get('bg_op_active', t.get('bg_card_active', t['bg_op']))
             bg_fn = t['bg_fn']
             bg_fn_hover = t['bg_fn_hover']

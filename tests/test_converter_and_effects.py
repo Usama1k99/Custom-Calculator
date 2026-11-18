@@ -12,7 +12,6 @@ from src.core.currency_engine import CurrencyEngine, format_currency_label, code
 from src.ui.converter_view import ConverterView, CONVERSION_FACTORS
 from src.ui.theme_manager import ThemeManager
 from src.ui.theme_dialog import ThemeDialog
-from src.ui.window_effects import apply_window_blur, remove_window_blur
 
 app = QApplication.instance() or QApplication([])
 
@@ -113,48 +112,73 @@ class TestConverterAndEffects(unittest.TestCase):
         tm = ThemeManager()
         dlg = ThemeDialog(tm, initial_tab=0)
 
-        # Verify blur toggle and two-pane layout exist
-        self.assertTrue(hasattr(dlg, "blur_toggle"))
+        # Verify transparency toggle and two-pane layout exist
+        self.assertTrue(hasattr(dlg, "trans_toggle") or hasattr(dlg, "blur_toggle"))
         self.assertTrue(hasattr(dlg, "slider_trans"))
         self.assertTrue(hasattr(dlg, "left_scroll"))
         self.assertTrue(hasattr(dlg, "right_scroll"))
         self.assertTrue(hasattr(dlg, "pane_divider"))
 
-        # Verify 0 to 100 slider range
+        # Verify 0 to 25 capped slider range
         self.assertEqual(dlg.slider_trans.minimum(), 0)
-        self.assertEqual(dlg.slider_trans.maximum(), 100)
+        self.assertEqual(dlg.slider_trans.maximum(), 25)
 
-        # Test toggling blur OFF
-        dlg.blur_toggle.set_blur(False, animate=False)
+        # Test toggling transparency OFF
+        toggle = getattr(dlg, "trans_toggle", getattr(dlg, "blur_toggle", None))
+        if hasattr(toggle, "set_transparency"):
+            toggle.set_transparency(False, animate=False)
+        else:
+            toggle.set_blur(False, animate=False)
         self.assertFalse(dlg.slider_trans.isEnabled())
         self.assertFalse(dlg.lbl_trans_title.isEnabled())
-        self.assertFalse(ConfigManager().get("blur_enabled"))
-        self.assertEqual(dlg.blur_desc_lbl.text(), "Off")
+        self.assertFalse(ConfigManager().get("transparency_enabled"))
+        desc_lbl = getattr(dlg, "trans_desc_lbl", getattr(dlg, "blur_desc_lbl", None))
+        self.assertEqual(desc_lbl.text(), "Off")
 
-        # Test toggling blur ON
-        dlg.blur_toggle.set_blur(True, animate=False)
+        # Test toggling transparency ON
+        if hasattr(toggle, "set_transparency"):
+            toggle.set_transparency(True, animate=False)
+        else:
+            toggle.set_blur(True, animate=False)
         self.assertTrue(dlg.slider_trans.isEnabled())
         self.assertTrue(dlg.lbl_trans_title.isEnabled())
-        self.assertTrue(ConfigManager().get("blur_enabled"))
-        self.assertEqual(dlg.blur_desc_lbl.text(), "On")
+        self.assertTrue(ConfigManager().get("transparency_enabled"))
+        self.assertEqual(desc_lbl.text(), "On")
 
-        # Test changing transparency
-        dlg.slider_trans.setValue(68)
-        self.assertEqual(ConfigManager().get("window_transparency"), 68)
-        self.assertIn("68%", dlg.lbl_trans_title.text())
+        # Test changing transparency within 0-25%
+        dlg.slider_trans.setValue(20)
+        self.assertEqual(ConfigManager().get("window_transparency"), 20)
+        self.assertIn("20%", dlg.lbl_trans_title.text())
+
+        # Test capping at 25%
+        dlg.slider_trans.setValue(45)
+        self.assertEqual(dlg.slider_trans.value(), 25)
+        self.assertEqual(ConfigManager().get("window_transparency"), 25)
+        self.assertIn("25%", dlg.lbl_trans_title.text())
+
+        # Test animated toggling does not raise NameError or unhandled exception
+        toggle.set_transparency(False, animate=True)
+        QApplication.instance().processEvents()
+        toggle.set_transparency(True, animate=True)
+        QApplication.instance().processEvents()
+        if hasattr(dlg, "mode_toggle"):
+            dlg.mode_toggle.set_dark_mode(False, animate=True)
+            QApplication.instance().processEvents()
+            dlg.mode_toggle.set_dark_mode(True, animate=True)
+            QApplication.instance().processEvents()
 
         # Test Done button commits
         dlg._on_done_clicked()
-        self.assertEqual(ConfigManager().get("window_transparency"), 68)
-        self.assertTrue(ConfigManager().get("blur_enabled"))
+        self.assertEqual(ConfigManager().get("window_transparency"), 25)
+        self.assertTrue(ConfigManager().get("transparency_enabled"))
 
-        # Reset to default
-        dlg.slider_trans.setValue(65)
+        # Reset to default 15%
+        dlg.slider_trans.setValue(15)
         dlg._on_done_clicked()
 
     def test_titlebar_icon_size_22x22(self):
         from src.ui.main_window import MainWindow
-        win = MainWindow()
+        win = MainWindow(check_updates=False)
         self.assertEqual(win.title_bar.icon_lbl.width(), 22)
         self.assertEqual(win.title_bar.icon_lbl.height(), 22)
         win.close()
@@ -197,7 +221,7 @@ class TestConverterAndEffects(unittest.TestCase):
 
     def test_history_drawer_toggle_keeps_x_position_static(self):
         from src.ui.main_window import MainWindow
-        win = MainWindow()
+        win = MainWindow(check_updates=False)
         if win.history_drawer.isVisible():
             win._toggle_history_drawer()
         win.show()
@@ -242,14 +266,16 @@ class TestConverterAndEffects(unittest.TestCase):
         self.assertIn(f"QFrame#HistoryDrawer {{\n            background-color: {tokens['bg_surface']};", qss_solid)
         self.assertIn(f"QFrame.historyCard, QFrame[class=\"historyCard\"] {{\n            background-color: {tokens['bg_card']};", qss_solid)
 
-    def test_window_effects_blur_intensity(self):
-        # Validates call with different intensities
-        dummy_hwnd = 12345
-        # Won't crash on win32 even with invalid dummy HWND due to try/except
-        apply_window_blur(dummy_hwnd, dark_mode=True, acrylic=True, blur_intensity="subtle")
-        apply_window_blur(dummy_hwnd, dark_mode=False, acrylic=True, blur_intensity="medium")
-        apply_window_blur(dummy_hwnd, dark_mode=True, acrylic=True, blur_intensity="strong")
-        remove_window_blur(dummy_hwnd)
+    def test_window_transparency_scaling(self):
+        # Validates that theme manager scales transparency smoothly across 0-25 range
+        tm = ThemeManager()
+        qss_0 = tm.generate_qss(transparency_enabled=True, window_transparency=0)
+        qss_25 = tm.generate_qss(transparency_enabled=True, window_transparency=25)
+        qss_solid = tm.generate_qss(transparency_enabled=False)
+        self.assertIn("rgba", qss_25)
+        self.assertIn("background-color:", qss_solid)
+        # Verify sidebar is always solid hex, never rgba
+        self.assertIn(f"background-color: {tm.current_tokens['bg_surface']};", qss_25)
 
     def test_hit_testing_empty_space_and_titlebar(self):
         from src.ui.main_window import MainWindow
@@ -300,6 +326,54 @@ class TestConverterAndEffects(unittest.TestCase):
         self.assertEqual(win.width(), initial_w)
         self.assertEqual(win.root_container.width(), initial_w)
         win.close()
+
+    def test_config_schema_migration_backward_compatibility(self):
+        """Validates that ConfigManager automatically migrates legacy schema v1 to v2 safely."""
+        from src.core.config import ConfigManager, CURRENT_SCHEMA_VERSION
+        import tempfile
+        import json
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_cfg = Path(tmp_dir) / "config.json"
+            # Write legacy schema v1 configuration
+            legacy_data = {
+                "theme_id": "dark_cyberpunk",
+                "mode": "Scientific",
+                "blur_enabled": False,
+                "blur_intensity": "strong",
+                "window_transparency": 60,
+                "always_on_top": True
+            }
+            with open(tmp_cfg, "w", encoding="utf-8") as f:
+                json.dump(legacy_data, f)
+
+            cm = ConfigManager()
+            cm.config_path = tmp_cfg
+            cm.load()
+
+            # Verify migration occurred
+            self.assertEqual(cm.get("schema_version"), CURRENT_SCHEMA_VERSION)
+            self.assertFalse(cm.get("transparency_enabled"))
+            # Legacy blur_enabled should fallback cleanly to transparency_enabled
+            self.assertFalse(cm.get("blur_enabled"))
+            # Obsolete blur_intensity fallback to 'none'
+            self.assertEqual(cm.get("blur_intensity"), "none")
+            # window_transparency scaled down from 60 (out of 100) to 0-25 range: round((60/100)*25) = 15
+            self.assertLessEqual(cm.get("window_transparency"), 25)
+            self.assertEqual(cm.get("window_transparency"), 15)
+            # Preserved custom user values
+            self.assertEqual(cm.get("theme_id"), "dark_cyberpunk")
+            self.assertEqual(cm.get("mode"), "Scientific")
+            self.assertTrue(cm.get("always_on_top"))
+
+            # Check that file on disk was cleanly rewritten without obsolete keys
+            with open(tmp_cfg, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            self.assertNotIn("blur_enabled", saved)
+            self.assertNotIn("blur_intensity", saved)
+            self.assertIn("transparency_enabled", saved)
+            self.assertEqual(saved["schema_version"], 2)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,6 @@ from src.ui.graph_canvas import GraphCanvas, CURVE_PALETTE
 from src.ui.graphing_view import GraphingView, FunctionRowWidget
 from src.ui.main_window import MainWindow
 from src.ui.theme_manager import ThemeManager
-from src.ui.window_effects import apply_window_blur, remove_window_blur
 
 app = QApplication.instance()
 if app is None:
@@ -319,14 +318,6 @@ class TestWindowsBlurEffect(unittest.TestCase):
         qss_solid = tm.generate_qss(blur_enabled=False)
         self.assertIn("background-color: #", qss_solid)
 
-    def test_safe_invocation_of_blur_helpers(self):
-        # Test calling the helper functions with a mock window handle
-        # Should execute safely on Windows without throwing unhandled exceptions
-        try:
-            apply_window_blur(0, dark_mode=True)
-            remove_window_blur(0)
-        except Exception as e:
-            self.fail(f"Window blur helpers raised an unexpected exception: {e}")
 
 
 if __name__ == "__main__":

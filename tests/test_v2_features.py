@@ -460,6 +460,20 @@ class TestV2Features(unittest.TestCase):
             self.assertTrue(drawer.export_btn.isEnabled())
             self.assertTrue(drawer.clear_btn.isEnabled())
             self.assertTrue(drawer.search_box.isEnabled())
+
+            # Performance pagination: add 75 calculations
+            for i in range(75):
+                temp_db.add_calculation("Standard", f"{i}+{i}", f"{2*i}")
+            drawer.refresh_history()
+
+            # Verify rendered cards are capped at 50 to maintain <35ms styling speed
+            card_count = sum(1 for i in range(drawer.cards_layout.count()) if drawer.cards_layout.itemAt(i).widget() and drawer.cards_layout.itemAt(i).widget().property("class") == "historyCard")
+            self.assertEqual(card_count, 50)
+
+            # Test Load More button increases display limit
+            drawer._load_more()
+            card_count_after = sum(1 for i in range(drawer.cards_layout.count()) if drawer.cards_layout.itemAt(i).widget() and drawer.cards_layout.itemAt(i).widget().property("class") == "historyCard")
+            self.assertEqual(card_count_after, 76)  # 1 initial + 75 bulk = 76 total
         finally:
             temp_db.close()
             if os.path.exists(temp_db_path):

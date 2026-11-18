@@ -10,6 +10,7 @@ Replicates Windows Calculator UI/UX:
 - Robust hardware Numpad event handling
 """
 
+import os
 from pathlib import Path
 import sys
 from PyQt6.QtCore import Qt, QPoint, QSize, QTimer, QEvent
@@ -30,7 +31,6 @@ from src.core.updater import (
 from src.database.history_db import HistoryDB
 from src.ui.theme_manager import ThemeManager
 from src.ui.title_bar import CustomTitleBar
-from src.ui.window_effects import apply_window_blur, remove_window_blur
 from src.ui.native_window import (
     apply_native_window_frame,
     HTMAXBUTTON, HTCLIENT, HTCAPTION,
@@ -57,8 +57,9 @@ class MainWindow(QMainWindow):
     def __init__(self, check_updates: bool = True):
         super().__init__()
 
-        # ─── 1. FRAMELESS WINDOW & BLUR GLASS SETUP ──────────────────
+        # ─── 1. FRAMELESS WINDOW & TRANSLUCENCY SETUP ────────────────
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self._history_auto_expanded_delta = 0
 
         # Load Configuration
@@ -100,6 +101,9 @@ class MainWindow(QMainWindow):
         self._switch_mode(saved_mode, save_config=False)
         register_context_provider(self._get_crash_context)
         record_breadcrumb("Lifecycle", f"MainWindow initialized with theme '{saved_theme}', mode '{saved_mode}'")
+        is_testing = "unittest" in sys.modules or "pytest" in sys.modules or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if is_testing:
+            check_updates = False
         if check_updates:
             self._start_version_check()
 
@@ -435,6 +439,7 @@ class MainWindow(QMainWindow):
             self.history_drawer.refresh_history()
         else:
             self.history_drawer.setVisible(False)
+            self.history_drawer.clear_rendered_cards()
             # CRITICAL: setMinimumWidth BEFORE resize so Qt does not clamp new_w to (mode_min_w + h_w)
             self.setMinimumWidth(mode_min_w)
 
@@ -512,11 +517,13 @@ class MainWindow(QMainWindow):
         self._apply_theme()
 
     def _apply_theme(self):
-        blur_enabled = self.config.get("blur_enabled", True)
-        window_transparency = self.config.get("window_transparency", 60)
-        blur_intensity = self.config.get("blur_intensity", "medium")
+        transparency_enabled = self.config.get("transparency_enabled", True)
+        window_transparency = self.config.get("window_transparency", 15)
 
-        qss = self.theme_mgr.generate_qss(blur_enabled=blur_enabled, window_transparency=window_transparency)
+        qss = self.theme_mgr.generate_qss(
+            transparency_enabled=transparency_enabled,
+            window_transparency=window_transparency
+        )
         self.setStyleSheet(qss)
         tokens = self.theme_mgr.current_tokens
         # Dynamically recolor vector icons (Backspace, Navigation modes & converters)
@@ -536,23 +543,15 @@ class MainWindow(QMainWindow):
         if hasattr(self, "title_bar") and hasattr(self.title_bar, "update_theme_icons"):
             self.title_bar.update_theme_icons(text_color)
 
-        # Apply clean window transparency (Enveil pattern)
         self._apply_window_opacity()
         self.update()
 
     def _apply_window_opacity(self):
-        """Applies true window transparency matching Enveil pattern without broken DWM backdrop overrides."""
-        blur_enabled = self.config.get("blur_enabled", self.config.get("blur_effect", True))
-        if blur_enabled:
-            trans_pct = max(0, min(100, int(self.config.get("window_transparency", 65))))
-            effective_trans = (trans_pct / 100.0) * 0.20
-            tokens = getattr(self.theme_mgr, "current_tokens", {})
-            is_dark = tokens.get("category", "dark") == "dark"
-            min_opacity = 0.70 if is_dark else 0.75
-            opacity = max(min_opacity, min(1.0, 1.0 - effective_trans))
-            self.setWindowOpacity(opacity)
-        else:
-            self.setWindowOpacity(1.0)
+        """
+        Applies window opacity. The central body is rendered with subtle RGBA translucency
+        via WA_TranslucentBackground while keeping NavSidebar 100% solid and opaque.
+        """
+        self.setWindowOpacity(1.0)
 
     def _on_angle_mode_toggled(self, new_mode: str):
         self.engine.set_angle_mode(new_mode)

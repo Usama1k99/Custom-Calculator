@@ -7,6 +7,7 @@ Allows instant search, formula restoration, and result copying. Zero emojis.
 import csv
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -117,6 +118,7 @@ class HistoryDrawer(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setFixedWidth(290)
         self._current_text_color = "#AAAAAA"
+        self._display_limit = 50
         self._init_ui()
 
     def update_theme_icons(self, text_color: str):
@@ -188,34 +190,25 @@ class HistoryDrawer(QFrame):
 
         self.refresh_history()
 
-    def refresh_history(self):
+    def clear_rendered_cards(self):
+        """Removes existing card widgets immediately from Qt widget tree to optimize layout and styling."""
+        while self.cards_layout.count() > 1:
+            item = self.cards_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+
+    def refresh_history(self, limit: Optional[int] = None):
         """
         Reloads history from SQLite database and populates UI cards.
         Deactivates action buttons in edge case when history is empty.
+        Caps rendered cards to display_limit (default 50) for fast UI rendering and stylesheet recalculation.
         """
-        # Clear existing cards except stretch
-        while self.cards_layout.count() > 1:
-            item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self.clear_rendered_cards()
 
         grouped = self.db.get_grouped_history()
-        total_items = 0
-
-        for session in grouped:
-            calcs = session["calculations"]
-            if not calcs:
-                continue
-
-            total_items += len(calcs)
-            # Session Header Label
-            s_header = QLabel(f"{session['session_name']} ({len(calcs)})")
-            s_header.setProperty("class", "historySessionHeader")
-            self.cards_layout.insertWidget(self.cards_layout.count() - 1, s_header)
-
-            for c in calcs:
-                card = self._create_calc_card(c)
-                self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
+        total_items = sum(len(session.get("calculations", [])) for session in grouped)
 
         has_items = (total_items > 0)
         self.export_btn.setEnabled(has_items)
@@ -227,6 +220,42 @@ class HistoryDrawer(QFrame):
             empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             empty_lbl.setProperty("class", "historyEmpty")
             self.cards_layout.insertWidget(0, empty_lbl)
+            return
+
+        effective_limit = limit or getattr(self, "_display_limit", 50)
+        rendered_count = 0
+
+        for session in grouped:
+            calcs = session.get("calculations", [])
+            if not calcs:
+                continue
+
+            remaining = effective_limit - rendered_count
+            if remaining <= 0:
+                break
+
+            session_calcs = calcs[:remaining]
+            rendered_count += len(session_calcs)
+
+            # Session Header Label
+            s_header = QLabel(f"{session['session_name']} ({len(calcs)})")
+            s_header.setProperty("class", "historySessionHeader")
+            self.cards_layout.insertWidget(self.cards_layout.count() - 1, s_header)
+
+            for c in session_calcs:
+                card = self._create_calc_card(c)
+                self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
+
+        if total_items > rendered_count:
+            more_btn = QPushButton(f"Load more ({total_items - rendered_count} remaining)")
+            more_btn.setProperty("class", "historyActionBtn")
+            more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            more_btn.clicked.connect(self._load_more)
+            self.cards_layout.insertWidget(self.cards_layout.count() - 1, more_btn)
+
+    def _load_more(self):
+        self._display_limit = getattr(self, "_display_limit", 50) + 50
+        self.refresh_history()
 
     def _create_calc_card(self, calc_item: dict) -> QFrame:
         card = QFrame()
@@ -269,14 +298,11 @@ class HistoryDrawer(QFrame):
             self.refresh_history()
             return
 
-        # Clear existing
-        while self.cards_layout.count() > 1:
-            item = self.cards_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self.clear_rendered_cards()
 
         matches = self.db.search_calculations(text.strip())
-        for m in matches:
+        effective_limit = getattr(self, "_display_limit", 50)
+        for m in matches[:effective_limit]:
             card = self._create_calc_card(m)
             self.cards_layout.insertWidget(self.cards_layout.count() - 1, card)
 
@@ -284,6 +310,7 @@ class HistoryDrawer(QFrame):
         dlg = HistoryConfirmDialog(self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.db.clear_all()
+            self._display_limit = 50
             self.refresh_history()
 
     def _export_to_csv(self):

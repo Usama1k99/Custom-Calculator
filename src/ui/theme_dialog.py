@@ -15,7 +15,7 @@ import json
 import re
 import tempfile
 from typing import Dict, Any, Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QUrl, QPoint, QPropertyAnimation
 from PyQt6.QtGui import QColor, QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
@@ -29,7 +29,7 @@ from src.ui.color_picker import IDEColorPicker
 from src.ui.title_bar import DialogTitleBar
 from src.ui.native_window import apply_dialog_rounded_corners
 from src.ui.update_dialog import UpdatePromptDialog, DeprecatedUpdateDialog
-from src.ui.toggle_switch import ThemeModeToggle, BlurEffectToggle
+from src.ui.toggle_switch import ThemeModeToggle, TransparencyToggle, BlurEffectToggle
 from src.ui.mode_icons import get_themed_svg_path
 from src.version import APP_VERSION, BUILD_STATUS, BUILD_COMMIT, GITHUB_REPO
 from src.core.updater import (
@@ -352,6 +352,7 @@ class ThemeImportDialog(QDialog):
 
 class ThemeDialog(QDialog):
     themeApplied = pyqtSignal()
+    transparencyChanged = pyqtSignal(int)
 
     def __init__(self, theme_manager: ThemeManager, parent=None, config: Optional[ConfigManager] = None, initial_tab: int = 0):
         super().__init__(parent)
@@ -370,13 +371,17 @@ class ThemeDialog(QDialog):
         self.temp_tokens = dict(self.theme_manager.current_tokens)
 
         # Snapshot initial values to allow clean revert on reject
-        self._initial_blur_enabled = self.config.get("blur_enabled", True)
-        self._initial_blur_intensity = self.config.get("blur_intensity", "medium")
-        self._initial_transparency = int(self.config.get("window_transparency", 60))
+        self._initial_trans_enabled = self.config.get("transparency_enabled", True)
+        self._initial_transparency = min(25, max(0, int(self.config.get("window_transparency", 15))))
         self._initial_theme_id = self.theme_manager.current_theme_id
 
         self._check_worker: Optional[VersionCheckWorker] = None
         self._builds_worker: Optional[BuildsFetchWorker] = None
+
+        self._trans_debounce_timer = QTimer(self)
+        self._trans_debounce_timer.setSingleShot(True)
+        self._trans_debounce_timer.setInterval(40)
+        self._trans_debounce_timer.timeout.connect(self._on_transparency_debounced)
 
         self._init_ui()
         if initial_tab > 0 and hasattr(self, "tabs"):
@@ -595,32 +600,32 @@ class ThemeDialog(QDialog):
         sub_sep.setObjectName("ThemeSubDivider")
         left_layout.addWidget(sub_sep)
 
-        # 5. Window Blur & Transparency Section
-        blur_toggle_row = QHBoxLayout()
-        blur_toggle_row.setSpacing(8)
-        blur_lbl = QLabel("Window Blur:")
-        blur_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
-        blur_toggle_row.addWidget(blur_lbl)
+        # 5. Window Transparency Section
+        trans_toggle_row = QHBoxLayout()
+        trans_toggle_row.setSpacing(8)
+        trans_lbl = QLabel("Window Transparency:")
+        trans_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
+        trans_toggle_row.addWidget(trans_lbl)
 
-        is_blur = self.config.get("blur_enabled", True)
-        self.blur_desc_lbl = QLabel("On" if is_blur else "Off")
-        self.blur_desc_lbl.setStyleSheet("font-size: 12px; font-weight: 500;")
-        blur_toggle_row.addWidget(self.blur_desc_lbl)
+        is_trans = self.config.get("transparency_enabled", True)
+        self.trans_desc_lbl = QLabel("On" if is_trans else "Off")
+        self.trans_desc_lbl.setStyleSheet("font-size: 12px; font-weight: 500;")
+        trans_toggle_row.addWidget(self.trans_desc_lbl)
 
-        blur_toggle_row.addStretch()
+        trans_toggle_row.addStretch()
 
-        self.blur_toggle = BlurEffectToggle(is_blur=is_blur)
-        self.blur_toggle.set_accent_color(self.theme_manager.current_tokens.get("accent_primary", "#F92672"))
+        self.trans_toggle = TransparencyToggle(is_transparency=is_trans)
+        self.trans_toggle.set_accent_color(self.theme_manager.current_tokens.get("accent_primary", "#F92672"))
         is_dark_theme = self.theme_manager.current_tokens.get("category", "dark") == "dark"
-        self.blur_toggle.set_off_track_color("#374151" if is_dark_theme else "#D1D5DB")
-        self.blur_toggle.blurToggled.connect(self._on_blur_toggled)
-        blur_toggle_row.addWidget(self.blur_toggle)
-        left_layout.addLayout(blur_toggle_row)
+        self.trans_toggle.set_off_track_color("#374151" if is_dark_theme else "#D1D5DB")
+        self.trans_toggle.transparencyToggled.connect(self._on_transparency_toggled)
+        trans_toggle_row.addWidget(self.trans_toggle)
+        left_layout.addLayout(trans_toggle_row)
 
-        # Window Transparency Slider Row
+        # Window Transparency Slider Row (Capped at 0-25%)
         row_trans = QHBoxLayout()
         row_trans.setSpacing(8)
-        saved_trans = int(self.config.get("window_transparency", 65))
+        saved_trans = min(25, max(0, int(self.config.get("window_transparency", 15))))
         self.lbl_trans_title = QLabel(f"Transparency ({saved_trans}%):")
         self.lbl_trans_title.setObjectName("lbl_trans_title")
         self.lbl_trans_title.setStyleSheet("font-size: 12px; font-weight: 500;")
@@ -629,16 +634,17 @@ class ThemeDialog(QDialog):
 
         self.slider_trans = QSlider(Qt.Orientation.Horizontal)
         self.slider_trans.setObjectName("ThemeTransSlider")
-        self.slider_trans.setRange(0, 100)
+        self.slider_trans.setRange(0, 25)
         self.slider_trans.setValue(saved_trans)
         self.slider_trans.setCursor(Qt.CursorShape.PointingHandCursor)
         self.slider_trans.valueChanged.connect(self._on_transparency_changed)
+        self.slider_trans.sliderReleased.connect(self._on_transparency_released)
         row_trans.addWidget(self.slider_trans, stretch=1)
         left_layout.addLayout(row_trans)
 
-        # Enable/disable transparency slider depending on blur toggle
-        self.slider_trans.setEnabled(is_blur)
-        self.lbl_trans_title.setEnabled(is_blur)
+        # Enable/disable transparency slider depending on transparency toggle
+        self.slider_trans.setEnabled(is_trans)
+        self.lbl_trans_title.setEnabled(is_trans)
 
         left_layout.addStretch()
         self.left_scroll.setWidget(left_widget)
@@ -1072,9 +1078,13 @@ class ThemeDialog(QDialog):
                 self.theme_manager.set_theme(first_theme_id)
                 self.temp_tokens = dict(self.theme_manager.current_tokens)
                 self._update_swatches_and_fields()
-                self._apply_theme_styles()
                 self._update_save_btn_visibility()
+                self._apply_theme_styles()
                 self.themeApplied.emit()
+
+    def _apply_mode_change_styles(self):
+        self._apply_theme_styles()
+        self.themeApplied.emit()
 
     def _on_custom_theme_changed(self, idx: int):
         theme_id = self.custom_combo.itemData(idx)
@@ -1166,19 +1176,36 @@ class ThemeDialog(QDialog):
                 self.custom_combo.setCurrentIndex(idx)
             self.themeApplied.emit()
 
-    def _on_blur_toggled(self, is_blur: bool):
-        self.blur_desc_lbl.setText("On" if is_blur else "Off")
-        self.config.set("blur_enabled", is_blur, auto_save=False)
-        self.config.set("blur_intensity", "medium" if is_blur else "none", auto_save=False)
+    def _on_transparency_toggled(self, is_trans: bool):
+        self.trans_desc_lbl.setText("On" if is_trans else "Off")
+        self.config.set("transparency_enabled", is_trans, auto_save=False)
         if hasattr(self, "slider_trans"):
-            self.slider_trans.setEnabled(is_blur)
+            self.slider_trans.setEnabled(is_trans)
         if hasattr(self, "lbl_trans_title"):
-            self.lbl_trans_title.setEnabled(is_blur)
+            self.lbl_trans_title.setEnabled(is_trans)
         self.themeApplied.emit()
 
+    def _apply_transparency_change_styles(self):
+        self.themeApplied.emit()
+
+    def _on_blur_toggled(self, is_blur: bool):
+        self._on_transparency_toggled(is_blur)
+
     def _on_transparency_changed(self, val: int):
+        val = max(0, min(25, val))
         self.lbl_trans_title.setText(f"Transparency ({val}%):")
         self.config.set("window_transparency", val, auto_save=False)
+        # While actively dragging with the mouse, do NOT apply theme to ensure completely smooth movement
+        if hasattr(self, "slider_trans") and not self.slider_trans.isSliderDown():
+            # Apply debounced update for non-drag adjustments (e.g. keyboard navigation)
+            self._trans_debounce_timer.start()
+
+    def _on_transparency_released(self):
+        # Dragging ended: apply the theme and opacity cleanly
+        self._trans_debounce_timer.stop()
+        self.themeApplied.emit()
+
+    def _on_transparency_debounced(self):
         self.themeApplied.emit()
 
     def _on_done_clicked(self):
@@ -1189,8 +1216,7 @@ class ThemeDialog(QDialog):
 
     def reject(self):
         # Revert live in-memory changes back to initial state if closed without Done
-        self.config.set("blur_enabled", self._initial_blur_enabled, auto_save=False)
-        self.config.set("blur_intensity", self._initial_blur_intensity, auto_save=False)
+        self.config.set("transparency_enabled", self._initial_trans_enabled, auto_save=False)
         self.config.set("window_transparency", self._initial_transparency, auto_save=False)
         self.config.set("theme_id", self._initial_theme_id, auto_save=False)
         if self.theme_manager.current_theme_id != self._initial_theme_id:
@@ -1542,7 +1568,11 @@ class ThemeDialog(QDialog):
 
         if hasattr(self, "mode_toggle"):
             self.mode_toggle.set_accent_color(t.get("accent_primary", "#F92672"))
-        if hasattr(self, "blur_toggle"):
+        if hasattr(self, "trans_toggle"):
+            self.trans_toggle.set_accent_color(t.get("accent_primary", "#F92672"))
+            is_dark_theme = t.get("category", "dark") == "dark"
+            self.trans_toggle.set_off_track_color("#374151" if is_dark_theme else "#D1D5DB")
+        elif hasattr(self, "blur_toggle"):
             self.blur_toggle.set_accent_color(t.get("accent_primary", "#F92672"))
             is_dark_theme = t.get("category", "dark") == "dark"
             self.blur_toggle.set_off_track_color("#374151" if is_dark_theme else "#D1D5DB")
