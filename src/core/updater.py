@@ -171,10 +171,8 @@ def get_version_status(target_version: str, releases: List[Dict[str, Any]]) -> s
             if s != VERSION_STATUS_FUNCTIONAL:
                 return s
 
-    if norm == "0.5.0":
+    if norm in ("0.5.0", "0.6.0"):
         return VERSION_STATUS_DEPRECATED
-    if norm == "0.6.0":
-        return VERSION_STATUS_NOT_RECOMMENDED
 
     return VERSION_STATUS_FUNCTIONAL
 
@@ -334,14 +332,30 @@ class BinaryDownloadWorker(QThread):
 
 OFFICIAL_KNOWN_RELEASES: List[Dict[str, Any]] = [
     {
-        "tag_name": "v0.7.0",
-        "name": "Custom Calculator v0.7.0",
-        "published_at": "2026-11-18",
-        "body": "Official standalone release binary for Custom Calculator v0.7.0.\nStatus: functional\nDeprecated versions: v0.5.0\nNot recommended: v0.6.0",
+        "tag_name": "v1.0.0",
+        "name": "Custom Calculator v1.0.0 (latest release)",
+        "published_at": "2026-11-20",
+        "body": "Official standalone release binary for Custom Calculator v1.0.0.\nStatus: functional\nNot recommended: v0.7.0\nDeprecated versions: v0.5.0, v0.6.0",
         "draft": False,
         "prerelease": False,
         "is_commit_build": False,
         "version_status": VERSION_STATUS_FUNCTIONAL,
+        "assets": [
+            {
+                "name": "CustomCalculator.exe",
+                "browser_download_url": f"https://github.com/{GITHUB_REPO}/releases/download/v1.0.0/CustomCalculator.exe"
+            }
+        ]
+    },
+    {
+        "tag_name": "v0.7.0",
+        "name": "Custom Calculator v0.7.0 [Not Recommended]",
+        "published_at": "2026-11-18",
+        "body": "Official standalone release binary for Custom Calculator v0.7.0.\nStatus: not_recommended\nDeprecated versions: v0.5.0, v0.6.0",
+        "draft": False,
+        "prerelease": False,
+        "is_commit_build": False,
+        "version_status": VERSION_STATUS_NOT_RECOMMENDED,
         "assets": [
             {
                 "name": "CustomCalculator.exe",
@@ -351,13 +365,13 @@ OFFICIAL_KNOWN_RELEASES: List[Dict[str, Any]] = [
     },
     {
         "tag_name": "v0.6.0",
-        "name": "Custom Calculator v0.6.0 [Not Recommended]",
+        "name": "Custom Calculator v0.6.0 [Deprecated]",
         "published_at": "2026-11-11",
-        "body": "Official standalone release binary for Custom Calculator v0.6.0.\nStatus: not_recommended",
+        "body": "Official standalone release binary for Custom Calculator v0.6.0.\nStatus: deprecated",
         "draft": False,
         "prerelease": False,
         "is_commit_build": False,
-        "version_status": VERSION_STATUS_NOT_RECOMMENDED,
+        "version_status": VERSION_STATUS_DEPRECATED,
         "assets": [
             {
                 "name": "CustomCalculator.exe",
@@ -492,9 +506,9 @@ def get_all_available_releases() -> List[Dict[str, Any]]:
         rel["is_commit_build"] = False
         detected_status = status_map.get(norm_tag) or rel.get("version_status") or parse_release_status(rel)
         if detected_status == VERSION_STATUS_FUNCTIONAL:
-            if norm_tag == "0.5.0":
+            if norm_tag in ("0.5.0", "0.6.0"):
                 detected_status = VERSION_STATUS_DEPRECATED
-            elif norm_tag == "0.6.0":
+            elif norm_tag == "0.7.0":
                 detected_status = VERSION_STATUS_NOT_RECOMMENDED
         rel["version_status"] = detected_status
         if not rel.get("assets"):

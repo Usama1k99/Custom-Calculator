@@ -165,6 +165,151 @@ class TestScientificKeypadInteractions(unittest.TestCase):
         self.assertFalse(self.keypad._is_2nd_active)
         self.assertEqual(btn_sqr.text(), "x²")
 
+    def test_open_parentheses_count_keypad_button(self):
+        paren_btn = self.keypad.button_map["("]
+        self.assertEqual(paren_btn.lbl_paren.text(), "(")
+        self.assertTrue(paren_btn.lbl_badge.isHidden())
+
+        self.keypad.update_open_parentheses_count(1)
+        self.assertFalse(paren_btn.lbl_badge.isHidden())
+        self.assertEqual(paren_btn.lbl_badge.text(), "1")
+
+        self.keypad.update_open_parentheses_count(2)
+        self.assertEqual(paren_btn.lbl_badge.text(), "2")
+
+        self.keypad.update_open_parentheses_count(3)
+        self.assertEqual(paren_btn.lbl_badge.text(), "3")
+
+        self.keypad.update_open_parentheses_count(50)
+        self.assertEqual(paren_btn.lbl_badge.text(), "50")
+
+        self.keypad.update_open_parentheses_count(0)
+        self.assertTrue(paren_btn.lbl_badge.isHidden())
+        self.assertEqual(paren_btn.lbl_badge.text(), "")
+
+        # Flashing "(" works
+        self.keypad.flash_button("(")
+        self.assertTrue(paren_btn.isDown())
+
+        # Flashing ")" works
+        btn_close = self.keypad.button_map[")"]
+        self.keypad.flash_button(")")
+        self.assertTrue(btn_close.isDown())
+
+        # Flashing "=" works for "=", "Enter", "Return"
+        btn_eq = self.keypad.button_map["="]
+        self.keypad.flash_button("=")
+        self.assertTrue(btn_eq.isDown())
+        btn_eq.setDown(False)
+        self.keypad.flash_button("Enter")
+        self.assertTrue(btn_eq.isDown())
+        btn_eq.setDown(False)
+        self.keypad.flash_button("Return")
+        self.assertTrue(btn_eq.isDown())
+
+        # Flashing "n!" works for "!", "fact", "n!"
+        btn_fact = self.keypad.button_map["n!"]
+        self.keypad.flash_button("!")
+        self.assertTrue(btn_fact.isDown())
+        self.keypad.flash_button("fact")
+        self.assertTrue(btn_fact.isDown())
+
+        self.keypad.update_open_parentheses_count(0)
+        self.assertEqual(paren_btn.text(), "(")
+        self.assertTrue(paren_btn.lbl_badge.isHidden())
+
+    def test_parenthesis_clicked_signal(self):
+        received = []
+        self.keypad.parenthesisClicked.connect(lambda p: received.append(p))
+
+        self.keypad.button_map["("].click()
+        self.assertEqual(received, ["("])
+
+        self.keypad.button_map[")"].click()
+        self.assertEqual(received, ["(", ")"])
+
+
+class TestMainWindowKeyboardFocusAndRouting(unittest.TestCase):
+    def setUp(self):
+        from src.ui.main_window import MainWindow
+        self.win = MainWindow()
+        self.win._switch_mode("Scientific", save_config=False)
+
+    def tearDown(self):
+        self.win.close()
+
+    def test_typing_when_display_is_focused_triggers_flash(self):
+        from PyQt6.QtCore import Qt, QEvent
+        from PyQt6.QtGui import QKeyEvent
+
+        self.win.display.primary_display.setFocus()
+        self.win.state.clear_all()
+
+        # Type digit '8'
+        ev8 = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_8, Qt.KeyboardModifier.NoModifier, "8")
+        QApplication.sendEvent(self.win.display.primary_display, ev8)
+        self.assertEqual(self.win.state.active_token, "8")
+        self.assertTrue(self.win.keypad.button_map["8"].isDown())
+
+        # Type operator '+'
+        ev_plus = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Plus, Qt.KeyboardModifier.NoModifier, "+")
+        QApplication.sendEvent(self.win.display.primary_display, ev_plus)
+        self.assertEqual(self.win.state.expression_trail, "8 + ")
+        self.assertTrue(self.win.keypad.button_map["+"].isDown())
+
+        # Type open parenthesis '(' via Num Row Shift+9
+        ev_paren = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_9, Qt.KeyboardModifier.ShiftModifier, "(")
+        QApplication.sendEvent(self.win.display.primary_display, ev_paren)
+        self.assertEqual(self.win.state.expression_trail, "8 + (")
+        self.assertTrue(self.win.keypad.button_map["("].isDown())
+
+        # Type factorial '!' via Num Row Shift+1
+        self.win.state.clear_all()
+        self.win.state.input_digit("4")
+        ev_fact = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_1, Qt.KeyboardModifier.ShiftModifier, "!")
+        QApplication.sendEvent(self.win.display.primary_display, ev_fact)
+        self.assertEqual(self.win.state.active_token, "24")
+        self.assertTrue(self.win.keypad.button_map["n!"].isDown())
+
+        # Test Enter and Return triggering equals pressed effect & evaluation
+        self.win.state.clear_all()
+        self.win.state.input_digit("2")
+        self.win.state.input_operator("+")
+        self.win.state.input_digit("3")
+
+        # Test Main Return
+        ev_return = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier, "\r")
+        QApplication.sendEvent(self.win.display.primary_display, ev_return)
+        self.assertEqual(self.win.state.active_token, "5")
+        self.assertTrue(self.win.keypad.button_map["="].isDown())
+
+        # Test Numpad Enter
+        self.win.keypad.button_map["="].setDown(False)
+        self.win.state.input_operator("+")
+        self.win.state.input_digit("4")
+        ev_enter = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Enter, Qt.KeyboardModifier.KeypadModifier, "\r")
+        QApplication.sendEvent(self.win.display.primary_display, ev_enter)
+        self.assertEqual(self.win.state.active_token, "9")
+        self.assertTrue(self.win.keypad.button_map["="].isDown())
+
+        # Test Backspace over open parenthesis decrements open_parentheses_count
+        self.win.state.clear_all()
+        ev_paren_open = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_9, Qt.KeyboardModifier.ShiftModifier, "(")
+        QApplication.sendEvent(self.win.display.primary_display, ev_paren_open)
+        self.assertEqual(self.win.state.open_parentheses_count, 1)
+        self.assertFalse(self.win.keypad.button_map["("].lbl_badge.isHidden())
+        self.assertEqual(self.win.keypad.button_map["("].lbl_badge.text(), "1")
+
+        ev_bs = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier)
+        QApplication.sendEvent(self.win.display.primary_display, ev_bs)
+        self.assertEqual(self.win.state.open_parentheses_count, 0)
+        self.assertTrue(self.win.keypad.button_map["("].lbl_badge.isHidden())
+
+        # Test stylesheet includes pressed pseudo-classes
+        qss = self.win.theme_mgr.generate_qss()
+        self.assertIn("QPushButton.fnKey:pressed", qss)
+        self.assertIn("QPushButton.equalsKey:pressed", qss)
+
 
 if __name__ == "__main__":
     unittest.main()

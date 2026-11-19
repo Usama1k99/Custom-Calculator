@@ -16,8 +16,8 @@ from typing import Set
 # Standard Mode: Digits 0-9, Decimal separator ('.', ','), Basic operators
 STANDARD_ALLOWED_CHARS: Set[str] = set("0123456789.+-*/%−×÷, ")
 
-# Scientific Mode: Digits, decimals, operators, parentheses, exponents, constants, math function letters
-SCIENTIFIC_ALLOWED_MATH_CHARS: Set[str] = set("0123456789.+-*/^%()−×÷, eEπ ")
+# Scientific Mode: Digits, decimals, operators, parentheses, exponents, constants, math function letters, factorial
+SCIENTIFIC_ALLOWED_MATH_CHARS: Set[str] = set("0123456789.+-*/^%! ()−×÷, eEπ ")
 
 # Valid letters forming mathematical functions and constants:
 # sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, log, ln, sqrt, cbrt, exp, abs, fact, mod, pi, deg, rad

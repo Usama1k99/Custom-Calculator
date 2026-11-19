@@ -375,6 +375,13 @@ class ThemeDialog(QDialog):
         self._initial_trans_enabled = self.config.get("transparency_enabled", True)
         self._initial_transparency = min(25, max(0, int(self.config.get("window_transparency", 15))))
         self._initial_theme_id = self.theme_manager.current_theme_id
+        self._initial_dark_theme_id = self.config.get("dark_theme_id", "dark_monokai")
+        self._initial_light_theme_id = self.config.get("light_theme_id", "light_soft_pink")
+
+        curr_theme = self.theme_manager.current_theme_id
+        is_dark = self.theme_manager.current_tokens.get("category", "dark") == "dark"
+        self._current_dark_theme_id = curr_theme if is_dark else self._initial_dark_theme_id
+        self._current_light_theme_id = curr_theme if not is_dark else self._initial_light_theme_id
 
         self._check_worker: Optional[VersionCheckWorker] = None
         self._builds_worker: Optional[BuildsFetchWorker] = None
@@ -936,6 +943,8 @@ class ThemeDialog(QDialog):
         idx = self.preset_combo.findData(self.theme_manager.current_theme_id)
         if idx >= 0:
             self.preset_combo.setCurrentIndex(idx)
+        elif self.theme_manager.current_theme_id in self.theme_manager.get_custom_themes_map():
+            self.preset_combo.setCurrentIndex(-1)
         else:
             self.preset_combo.setCurrentIndex(0)
         self.preset_combo.blockSignals(False)
@@ -1078,25 +1087,41 @@ class ThemeDialog(QDialog):
 
     def _on_theme_mode_toggled(self, is_dark: bool):
         self.mode_desc_lbl.setText("Dark" if is_dark else "Light")
+        target_theme_id = self._current_dark_theme_id if is_dark else self._current_light_theme_id
+
+        if not target_theme_id or target_theme_id not in self.theme_manager.themes:
+            target_theme_id = "dark_monokai" if is_dark else "light_soft_pink"
+            if is_dark:
+                self._current_dark_theme_id = target_theme_id
+            else:
+                self._current_light_theme_id = target_theme_id
+
+        self.theme_manager.set_theme(target_theme_id)
+        self.temp_tokens = dict(self.theme_manager.current_tokens)
+
         self._populate_presets(is_dark=is_dark)
 
-        curr_cat = self.theme_manager.current_tokens.get("category", "dark")
-        target_cat = "dark" if is_dark else "light"
+        if hasattr(self, "custom_combo"):
+            custom_map = self.theme_manager.get_custom_themes_map()
+            self.custom_combo.blockSignals(True)
+            if target_theme_id in custom_map:
+                idx = self.custom_combo.findData(target_theme_id)
+                if idx >= 0:
+                    self.custom_combo.setCurrentIndex(idx)
+                if hasattr(self, "preset_combo"):
+                    self.preset_combo.blockSignals(True)
+                    self.preset_combo.setCurrentIndex(-1)
+                    self.preset_combo.blockSignals(False)
+            else:
+                self.custom_combo.setCurrentIndex(0)
+            self.custom_combo.blockSignals(False)
 
-        if curr_cat != target_cat:
-            first_theme_id = self.preset_combo.itemData(0)
-            if first_theme_id:
-                if hasattr(self, "custom_combo"):
-                    self.custom_combo.blockSignals(True)
-                    self.custom_combo.setCurrentIndex(0)
-                    self.custom_combo.blockSignals(False)
-
-                self.theme_manager.set_theme(first_theme_id)
-                self.temp_tokens = dict(self.theme_manager.current_tokens)
-                self._update_swatches_and_fields()
-                self._update_save_btn_visibility()
-                self._apply_theme_styles()
-                self.themeApplied.emit()
+        accent = self.theme_manager.current_tokens.get("accent_primary", "#F92672")
+        self.mode_toggle.set_accent_color(accent)
+        self._update_swatches_and_fields()
+        self._update_save_btn_visibility()
+        self._apply_theme_styles()
+        self.themeApplied.emit()
 
     def _apply_mode_change_styles(self):
         self._apply_theme_styles()
@@ -1108,6 +1133,10 @@ class ThemeDialog(QDialog):
             self.theme_manager.set_theme(theme_id)
             self.temp_tokens = dict(self.theme_manager.current_tokens)
             is_dark = self.temp_tokens.get("category", "dark") == "dark"
+            if is_dark:
+                self._current_dark_theme_id = theme_id
+            else:
+                self._current_light_theme_id = theme_id
 
             self.mode_toggle.blockSignals(True)
             self.mode_toggle.set_dark_mode(is_dark, animate=False)
@@ -1115,6 +1144,12 @@ class ThemeDialog(QDialog):
             self.mode_desc_lbl.setText("Dark" if is_dark else "Light")
 
             self._populate_presets(is_dark=is_dark)
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(-1)
+            self.preset_combo.blockSignals(False)
+
+            accent = self.theme_manager.current_tokens.get("accent_primary", "#F92672")
+            self.mode_toggle.set_accent_color(accent)
             self._update_swatches_and_fields()
             self._apply_theme_styles()
             self._update_save_btn_visibility()
@@ -1130,6 +1165,14 @@ class ThemeDialog(QDialog):
 
             self.theme_manager.set_theme(theme_id)
             self.temp_tokens = dict(self.theme_manager.current_tokens)
+            is_dark = self.temp_tokens.get("category", "dark") == "dark"
+            if is_dark:
+                self._current_dark_theme_id = theme_id
+            else:
+                self._current_light_theme_id = theme_id
+
+            accent = self.theme_manager.current_tokens.get("accent_primary", "#F92672")
+            self.mode_toggle.set_accent_color(accent)
             self._update_swatches_and_fields()
             self._apply_theme_styles()
             self._update_save_btn_visibility()
@@ -1156,6 +1199,11 @@ class ThemeDialog(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             theme_name = dlg.chosen_name
             t_id = self.theme_manager.save_new_custom_theme(theme_name, dict(self.temp_tokens))
+            is_dark = self.temp_tokens.get("category", "dark") == "dark"
+            if is_dark:
+                self._current_dark_theme_id = t_id
+            else:
+                self._current_light_theme_id = t_id
             self._populate_custom_themes()
             idx = self.custom_combo.findData(t_id)
             if idx >= 0:
@@ -1186,8 +1234,14 @@ class ThemeDialog(QDialog):
         """Opens import dialog supporting both picking a file and pasting raw JSON."""
         dlg = ThemeImportDialog(self.theme_manager, self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.imported_theme_id:
+            t_id = dlg.imported_theme_id
+            is_dark = self.theme_manager.themes.get(t_id, {}).get("category", "dark") == "dark"
+            if is_dark:
+                self._current_dark_theme_id = t_id
+            else:
+                self._current_light_theme_id = t_id
             self._populate_custom_themes()
-            idx = self.custom_combo.findData(dlg.imported_theme_id)
+            idx = self.custom_combo.findData(t_id)
             if idx >= 0:
                 self.custom_combo.setCurrentIndex(idx)
             self.themeApplied.emit()
@@ -1227,6 +1281,8 @@ class ThemeDialog(QDialog):
     def _on_done_clicked(self):
         # Permanently save committed theme and effects to config.json
         self.config.set("theme_id", self.theme_manager.current_theme_id, auto_save=False)
+        self.config.set("dark_theme_id", self._current_dark_theme_id, auto_save=False)
+        self.config.set("light_theme_id", self._current_light_theme_id, auto_save=False)
         self.config.save()
         self.accept()
 
@@ -1235,6 +1291,8 @@ class ThemeDialog(QDialog):
         self.config.set("transparency_enabled", self._initial_trans_enabled, auto_save=False)
         self.config.set("window_transparency", self._initial_transparency, auto_save=False)
         self.config.set("theme_id", self._initial_theme_id, auto_save=False)
+        self.config.set("dark_theme_id", self._initial_dark_theme_id, auto_save=False)
+        self.config.set("light_theme_id", self._initial_light_theme_id, auto_save=False)
         if self.theme_manager.current_theme_id != self._initial_theme_id:
             self.theme_manager.set_theme(self._initial_theme_id)
         self.themeApplied.emit()

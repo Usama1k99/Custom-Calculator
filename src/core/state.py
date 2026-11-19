@@ -80,6 +80,8 @@ class CalculatorState:
         self.last_op_repeat = None
         self.last_operand_repeat = None
 
+        self.open_parentheses_count: int = 0
+
         self.last_result: Optional[Decimal] = None
         self.memory_value: Decimal = Decimal("0")
 
@@ -136,6 +138,22 @@ class CalculatorState:
                 elif self.active_token == "-0":
                     self.active_token = f"-{char}"
                 else:
+                    if self.mode != "Programmer":
+                        if char.isdigit():
+                            digit_count = sum(1 for c in self.active_token if c.isdigit())
+                            if digit_count >= 16:
+                                return
+                    else:
+                        rad = getattr(self, "radix", "HEX").upper()
+                        clean = self.active_token.lstrip("-")
+                        if rad == "HEX" and len(clean) >= 16:
+                            return
+                        elif rad == "BIN" and len(clean) >= 64:
+                            return
+                        elif rad == "OCT" and len(clean) >= 22:
+                            return
+                        elif rad == "DEC" and len(clean) >= 20:
+                            return
                     self.active_token += char
 
                 self.active_token = sanitize_leading_zeros(self.active_token, self.mode)
@@ -160,6 +178,12 @@ class CalculatorState:
             self.is_unary_active = False
             self.is_evaluated = False
             self.last_op_repeat = None
+        elif self.expression_trail.rstrip().endswith(")") and not self.current_operand_repr:
+            # Trailing closed parenthesis: apply operator directly to parenthesized expression
+            self.expression_trail = f"{self.expression_trail.rstrip()} {op} "
+            self.active_token = ""
+            self.current_operand_repr = None
+            self.is_unary_active = False
         else:
             if not self.active_token and not self.current_operand_repr:
                 # If active_token is empty and we already have a trailing operator, replace it!
@@ -212,17 +236,59 @@ class CalculatorState:
 
     def input_percentage(self):
         """
-        Context-aware percentage on the active token.
+        Context-aware percentage on the active token (Windows Calculator standard behavior).
+        - In addition/subtraction ('A + B%', 'A - B%'): calculates B% of A -> (A * (B / 100)),
+          replacing active_token with this percentage delta so '=' evaluates A ± (A * B / 100).
+        - In multiplication/division ('A * B%', 'A / B%'): calculates B / 100 -> (B / 100).
+        - Standalone ('B%'): calculates B / 100.
         """
         record_breadcrumb("Input", "Percentage (%)", trail=self.expression_trail, active=self.active_token)
-        if self.has_error or not self.active_token:
+        if self.has_error:
             return
 
-        # If we have an expression trail like "100 +", B% calculates (100 * (B / 100))
-        full_expr = f"{self.expression_trail} {self.active_token}%"
-        success, val_str, dec_val = self.engine.evaluate(full_expr, mode=self.mode)
-        if success and dec_val is not None:
-            self.active_token = val_str
+        # If active_token is empty, check if we have a base or evaluated value
+        if not self.active_token:
+            if self.is_evaluated and self.last_result is not None:
+                self.active_token = self.engine.format_number(self.last_result)
+                self.is_evaluated = False
+            elif not self.expression_trail:
+                return
+
+        trail_clean = self.expression_trail.strip()
+        matched_op = None
+        for op in ("mod", "+", "-", "*", "/", "×", "÷", "−"):
+            if trail_clean.endswith(op):
+                matched_op = op
+                break
+
+        if matched_op:
+            preceding_expr = trail_clean[:-len(matched_op)].strip()
+            succ, _, base_dec = self.engine.evaluate(preceding_expr, mode=self.mode) if preceding_expr else (True, "0", Decimal("0"))
+            base_val = base_dec if (succ and base_dec is not None) else Decimal("0")
+
+            try:
+                act_str = self.active_token.replace(",", "") if self.active_token else str(base_val)
+                act_val = Decimal(act_str)
+            except Exception:
+                act_val = base_val
+
+            if matched_op in ("+", "-", "−"):
+                pct_val = base_val * (act_val / Decimal("100"))
+            else:  # *, /, ×, ÷, mod
+                pct_val = act_val / Decimal("100")
+
+            self.active_token = self.engine.format_number(pct_val)
+            self.current_operand_repr = None
+            self._notify()
+        else:
+            try:
+                act_str = self.active_token.replace(",", "") if self.active_token else "0"
+                act_val = Decimal(act_str)
+            except Exception:
+                act_val = Decimal("0")
+            pct_val = act_val / Decimal("100")
+            self.active_token = self.engine.format_number(pct_val)
+            self.current_operand_repr = None
             self._notify()
 
     def negate(self):
@@ -275,24 +341,37 @@ class CalculatorState:
             self.current_operand_repr = None
             self.is_unary_active = False
             self.active_token = "0"
+            self.open_parentheses_count = max(0, self.expression_trail.count("(") - self.expression_trail.count(")"))
             self._notify()
             return
 
-        if self.active_token:
+        if self.active_token and self.active_token != "0":
             s = self.active_token[:-1]
             if not s or s == "-":
                 self.active_token = "0"
             else:
                 self.active_token = s
+            self.open_parentheses_count = max(0, self.expression_trail.count("(") - self.expression_trail.count(")"))
             self._notify()
         elif self.expression_trail:
-            # Active token is empty, remove the trailing operator and restore previous operand
-            tokens = self.expression_trail.strip().split()
-            if tokens:
-                tokens.pop()  # remove operator
-                self.active_token = tokens.pop() if tokens else "0"
-                self.expression_trail = " ".join(tokens) + (" " if tokens else "")
-                self._notify()
+            trail = self.expression_trail.rstrip()
+            if trail.endswith(")"):
+                self.expression_trail = trail[:-1]
+            elif trail.endswith("("):
+                if trail.endswith(" × ("):
+                    self.expression_trail = trail[:-4]
+                else:
+                    self.expression_trail = trail[:-1]
+            else:
+                # Active token is empty or "0", remove the trailing operator and restore previous operand
+                tokens = trail.split()
+                if tokens:
+                    tokens.pop()  # remove operator
+                    self.active_token = tokens.pop() if tokens else "0"
+                    self.expression_trail = " ".join(tokens) + (" " if tokens else "")
+
+            self.open_parentheses_count = max(0, self.expression_trail.count("(") - self.expression_trail.count(")"))
+            self._notify()
 
     def clear_entry(self):
         """
@@ -314,6 +393,7 @@ class CalculatorState:
         record_breadcrumb("Action", "Clear All (C)")
         self.expression_trail = ""
         self.active_token = "0"
+        self.open_parentheses_count = 0
         self.current_operand_repr = None
         self.is_unary_active = False
         self.pinned_expression = ""
@@ -321,6 +401,86 @@ class CalculatorState:
         self.has_error = False
         self.last_op_repeat = None
         self._notify()
+
+    def input_parenthesis(self, paren: str):
+        record_breadcrumb("Input", f"Parenthesis '{paren}'", trail=self.expression_trail, active=self.active_token)
+        if self.has_error:
+            return
+
+        if paren == "(":
+            if self.open_parentheses_count >= 50:
+                return
+
+            if self.is_evaluated:
+                self.expression_trail = "("
+                self.active_token = "0"
+                self.current_operand_repr = None
+                self.is_evaluated = False
+                self.open_parentheses_count = 1
+                self._notify()
+                return
+
+            trail = self.expression_trail.rstrip()
+            if trail.endswith(")"):
+                self.expression_trail = f"{trail} × ("
+                self.active_token = "0"
+                self.current_operand_repr = None
+                self.open_parentheses_count += 1
+            elif self.current_operand_repr:
+                self.expression_trail = f"{trail} {self.current_operand_repr} × (".strip()
+                self.current_operand_repr = None
+                self.active_token = "0"
+                self.open_parentheses_count += 1
+            elif self.active_token and self.active_token != "0":
+                if trail:
+                    self.expression_trail = f"{trail} {self.active_token} × ("
+                else:
+                    self.expression_trail = f"{self.active_token} × ("
+                self.active_token = "0"
+                self.open_parentheses_count += 1
+            else:
+                if trail:
+                    self.expression_trail = f"{self.expression_trail}("
+                else:
+                    self.expression_trail = "("
+                self.active_token = "0"
+                self.open_parentheses_count += 1
+
+            self._notify()
+
+        elif paren == ")":
+            if self.open_parentheses_count <= 0:
+                return
+
+            trail = self.expression_trail.rstrip()
+            if trail.endswith("("):
+                tok = self.current_operand_repr if self.current_operand_repr else self.active_token
+                self.expression_trail = f"{trail}{tok})"
+            elif trail.endswith(")"):
+                self.expression_trail = f"{trail})"
+            else:
+                tok = self.current_operand_repr if self.current_operand_repr else self.active_token
+                if tok:
+                    self.expression_trail = f"{trail} {tok})".strip()
+                else:
+                    self.expression_trail = f"{trail})"
+
+            self.open_parentheses_count = max(0, self.open_parentheses_count - 1)
+            self.current_operand_repr = None
+
+            # Show evaluated inner value of the closed bracket group in active token display
+            last_open = self.expression_trail.rfind("(")
+            if last_open != -1:
+                sub_expr = self.expression_trail[last_open:]
+                succ, val_str, _ = self.engine.evaluate(sub_expr, mode=self.mode)
+                if succ and val_str:
+                    self.active_token = val_str
+                else:
+                    self.active_token = "0"
+            else:
+                self.active_token = "0"
+
+            self._notify()
 
     def evaluate(self):
         """
@@ -364,18 +524,33 @@ class CalculatorState:
             )
             return
 
-        # Build complete display formula for pinned ribbon
-        final_repr = self.current_operand_repr if self.current_operand_repr else self.active_token
-        if final_repr:
-            display_formula = f"{self.expression_trail.strip()} {final_repr.strip()}".strip()
-        else:
+        # Build complete display formula for pinned ribbon & expression to evaluate
+        if self.open_parentheses_count > 0:
+            trail = self.expression_trail.rstrip()
+            if trail.endswith("(") or any(trail.endswith(op) for op in ("+", "-", "*", "/", "×", "÷", "−")):
+                if self.active_token:
+                    trail = f"{trail} {self.active_token}"
+            elif not trail.endswith(")"):
+                if self.active_token and self.active_token != "0":
+                    trail = f"{trail} {self.active_token}"
+            trail += ")" * self.open_parentheses_count
+            self.open_parentheses_count = 0
+            display_formula = trail
+            expr_to_eval = trail
+        elif self.expression_trail.rstrip().endswith(")") and not self.current_operand_repr:
             display_formula = self.expression_trail.strip()
-
-        # Engine expression to evaluate (uses numerical value of active_token)
-        if self.active_token:
-            expr_to_eval = f"{self.expression_trail.strip()} {self.active_token.strip()}".strip()
-        else:
             expr_to_eval = self.expression_trail.strip()
+        else:
+            final_repr = self.current_operand_repr if self.current_operand_repr else self.active_token
+            if final_repr:
+                display_formula = f"{self.expression_trail.strip()} {final_repr.strip()}".strip()
+            else:
+                display_formula = self.expression_trail.strip()
+
+            if self.active_token:
+                expr_to_eval = f"{self.expression_trail.strip()} {self.active_token.strip()}".strip()
+            else:
+                expr_to_eval = self.expression_trail.strip()
 
         # Capture repeat operation components
         tokens = expr_to_eval.split()
@@ -414,6 +589,7 @@ class CalculatorState:
             self.expression_trail = " ".join(tokens[:-1]) + (" " if len(tokens) > 1 else "")
         else:
             self.active_token = "0"
+        self.open_parentheses_count = max(0, self.expression_trail.count("(") - self.expression_trail.count(")"))
         self._notify()
 
     def _trigger_error(self, message: str):

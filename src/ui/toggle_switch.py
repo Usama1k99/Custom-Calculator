@@ -157,16 +157,25 @@ class TransparencyToggle(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # SVG Renderers for crisp vector icons (zero emojis)
-        # Transparency ON: Overlapping minimalist window panes (clean layering)
-        trans_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="7" y="7" width="13" height="13" rx="2.5"/>
-  <path d="M17 7V5.5A2.5 2.5 0 0 0 14.5 3h-9A2.5 2.5 0 0 0 3 5.5v9A2.5 2.5 0 0 0 5.5 17H7"/>
-</svg>"""
-        # Transparency OFF (Solid): Single solid opaque window pane (clean minimalist surface)
-        solid_svg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#9CA3AF" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="4.5" y="4.5" width="15" height="15" rx="2.5" fill="#9CA3AF" fill-opacity="0.35"/>
+        # Transparency ON: 4-Quadrant Minimalist Checkerboard Window (Pair B)
+        trans_svg = """<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <rect x="3" y="3" width="18" height="18" rx="3.5" stroke="#FFFFFF" stroke-width="2"/>
+  <path d="M12 3v18M3 12h18" stroke="#FFFFFF" stroke-width="1.8"/>
+  <rect x="3.5" y="3.5" width="8" height="8" fill="#FFFFFF" rx="1.5" fill-opacity="0.5"/>
+  <rect x="12.5" y="12.5" width="8" height="8" fill="#FFFFFF" rx="1.5" fill-opacity="0.5"/>
 </svg>"""
         self._trans_renderer = QSvgRenderer(QByteArray(trans_svg.encode("utf-8")))
+        self._update_solid_renderer()
+
+    def _update_solid_renderer(self):
+        # Dynamically tint solid icon according to track brightness for optimal contrast
+        c = QColor(self._bg_off_track)
+        lum = (0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()) / 255.0
+        icon_color = "#4B5563" if lum > 0.55 else "#9CA3AF"
+        # Transparency OFF (Solid): Solid Opaque Window Pane (Pair B)
+        solid_svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none">
+  <rect x="3.5" y="3.5" width="17" height="17" rx="3" fill="{icon_color}" fill-opacity="0.75" stroke="{icon_color}" stroke-width="1.5"/>
+</svg>"""
         self._solid_renderer = QSvgRenderer(QByteArray(solid_svg.encode("utf-8")))
 
     def set_accent_color(self, hex_color: str):
@@ -175,6 +184,7 @@ class TransparencyToggle(QWidget):
 
     def set_off_track_color(self, hex_color: str):
         self._bg_off_track = hex_color
+        self._update_solid_renderer()
         self.update()
 
     @pyqtProperty(float)

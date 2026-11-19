@@ -376,6 +376,7 @@ class ThemeManager:
             bg_op_active = self._hex_to_rgba(t.get('bg_op_active', t.get('bg_card_active', t['bg_op'])), min(0.98, base_alpha * 1.25 + 0.05))
             bg_fn = self._hex_to_rgba(t['bg_fn'], min(0.92, base_alpha * 0.95 + 0.04))
             bg_fn_hover = self._hex_to_rgba(t['bg_fn_hover'], min(0.96, base_alpha * 1.15 + 0.05))
+            bg_fn_active = self._hex_to_rgba(t.get('bg_fn_active', t.get('bg_card_active', t['bg_fn'])), min(0.98, base_alpha * 1.25 + 0.05))
             border_key = "rgba(255, 255, 255, 0.08)" if is_dark else "rgba(0, 0, 0, 0.08)"
             border_window = "1px solid rgba(255, 255, 255, 0.12)" if is_dark else "1px solid rgba(0, 0, 0, 0.10)"
             bg_overlay = self._hex_to_rgba(t['bg_surface'], min(0.96, base_alpha + 0.10))
@@ -383,6 +384,13 @@ class ThemeManager:
             bg_history_card = self._hex_to_rgba(t['bg_card'], min(0.92, base_alpha * 1.05 + 0.04))
             bg_history_card_hover = self._hex_to_rgba(t['bg_card_hover'], min(0.95, base_alpha * 1.15 + 0.05))
             bg_history_pill = self._hex_to_rgba(t['bg_surface'], min(0.90, base_alpha * 0.98 + 0.05))
+            hover_accent = t.get('accent_hover', t['accent_primary'])
+            try:
+                c = QColor(hover_accent)
+                eq_active_hex = c.darker(115).name() if c.isValid() else hover_accent
+            except Exception:
+                eq_active_hex = hover_accent
+            bg_equals_active = self._hex_to_rgba(t.get('accent_active', eq_active_hex), min(0.98, base_alpha * 1.25 + 0.05))
         else:
             # When transparency is off: STRICTLY OPAQUE (no transparency applied)
             bg_window = t['bg_base']
@@ -394,6 +402,7 @@ class ThemeManager:
             bg_op_active = t.get('bg_op_active', t.get('bg_card_active', t['bg_op']))
             bg_fn = t['bg_fn']
             bg_fn_hover = t['bg_fn_hover']
+            bg_fn_active = t.get('bg_fn_active', t.get('bg_card_active', t['bg_fn']))
             border_key = t['border_subtle']
             border_window = "none"
             bg_overlay = t['bg_surface']
@@ -401,16 +410,13 @@ class ThemeManager:
             bg_history_card = t['bg_card']
             bg_history_card_hover = t['bg_card_hover']
             bg_history_pill = t['bg_surface']
-            bg_op_active = t.get('bg_op_active', t.get('bg_card_active', t['bg_op']))
-            bg_fn = t['bg_fn']
-            bg_fn_hover = t['bg_fn_hover']
-            border_key = t['border_subtle']
-            border_window = "none"
-            bg_overlay = t['bg_surface']
-            bg_history_drawer = t['bg_surface']
-            bg_history_card = t['bg_card']
-            bg_history_card_hover = t['bg_card_hover']
-            bg_history_pill = t['bg_surface']
+            hover_accent = t.get('accent_hover', t['accent_primary'])
+            try:
+                c = QColor(hover_accent)
+                eq_active_hex = c.darker(115).name() if c.isValid() else hover_accent
+            except Exception:
+                eq_active_hex = hover_accent
+            bg_equals_active = t.get('accent_active', eq_active_hex)
 
         # Ensure dynamically tinted SVGs are written and absolute posix paths are used in QSS
         from src.ui.mode_icons import get_themed_svg_path
@@ -581,6 +587,9 @@ class ThemeManager:
             background-color: {bg_fn_hover};
             border-color: rgba(255, 255, 255, 0.18);
         }}
+        QPushButton.fnKey:pressed {{
+            background-color: {bg_fn_active};
+        }}
         QPushButton.equalsKey {{
             background-color: {t['accent_primary']};
             color: {t['text_accent']};
@@ -590,6 +599,9 @@ class ThemeManager:
         }}
         QPushButton.equalsKey:hover {{
             background-color: {t['accent_hover']};
+        }}
+        QPushButton.equalsKey:pressed {{
+            background-color: {bg_equals_active};
         }}
 
         /* ─── MODERN WINDOWS 11 FLUENT SCROLLBAR ─────────────────── */

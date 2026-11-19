@@ -364,16 +364,22 @@ class TestConverterAndEffects(unittest.TestCase):
             self.assertEqual(cm.get("window_transparency"), 15)
             # Preserved custom user values
             self.assertEqual(cm.get("theme_id"), "dark_cyberpunk")
+            self.assertEqual(cm.get("dark_theme_id"), "dark_cyberpunk")
+            self.assertEqual(cm.get("light_theme_id"), "light_soft_pink")
             self.assertEqual(cm.get("mode"), "Scientific")
             self.assertTrue(cm.get("always_on_top"))
 
-            # Check that file on disk was cleanly rewritten without obsolete keys
+            # Check that file on disk was cleanly rewritten without obsolete keys and with new schema
             with open(tmp_cfg, "r", encoding="utf-8") as f:
                 saved = json.load(f)
             self.assertNotIn("blur_enabled", saved)
             self.assertNotIn("blur_intensity", saved)
             self.assertIn("transparency_enabled", saved)
-            self.assertEqual(saved["schema_version"], 2)
+            self.assertIn("dark_theme_id", saved)
+            self.assertIn("light_theme_id", saved)
+            self.assertEqual(saved["dark_theme_id"], "dark_cyberpunk")
+            self.assertEqual(saved["light_theme_id"], "light_soft_pink")
+            self.assertEqual(saved["schema_version"], CURRENT_SCHEMA_VERSION)
 
 
 if __name__ == "__main__":

@@ -997,6 +997,94 @@ class TestV2Features(unittest.TestCase):
         self.assertFalse(dlg.btn_install_selected.isHidden())
         self.assertEqual(dlg.btn_install_selected.text(), "Update to v99.0.0")
 
+    # ─── 41. DUAL-THEME MEMORY & PERSISTENCE ACROSS LIGHT/DARK TOGGLE ───
+    def test_dark_light_theme_memory_toggle_and_schema_persistence(self):
+        from src.core.config import ConfigManager
+        from src.ui.theme_dialog import ThemeDialog
+        from src.ui.theme_manager import ThemeManager
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg_path = os.path.join(tmp_dir, "config.json")
+            cfg = ConfigManager(config_path=cfg_path)
+            cfg.set("theme_id", "dark_obsidian")
+            cfg.set("dark_theme_id", "dark_obsidian")
+            cfg.set("light_theme_id", "light_parchment")
+
+            tm = ThemeManager(initial_theme_id="dark_obsidian")
+            dlg = ThemeDialog(tm, config=cfg)
+
+            # Initially dark mode with dark_obsidian
+            self.assertEqual(tm.current_theme_id, "dark_obsidian")
+            self.assertEqual(dlg.preset_combo.currentData(), "dark_obsidian")
+
+            # Toggle to Light mode
+            dlg.mode_toggle.set_dark_mode(False)
+            dlg._on_theme_mode_toggled(False)
+            # Memory should restore configured light_theme_id ("light_parchment"), not default "light_soft_pink"
+            self.assertEqual(tm.current_theme_id, "light_parchment")
+            self.assertEqual(dlg.preset_combo.currentData(), "light_parchment")
+
+            # Change light preset to "light_snow"
+            snow_idx = dlg.preset_combo.findData("light_snow")
+            self.assertGreaterEqual(snow_idx, 0)
+            dlg.preset_combo.setCurrentIndex(snow_idx)
+            self.assertEqual(tm.current_theme_id, "light_snow")
+
+            # Toggle back to Dark mode
+            dlg.mode_toggle.set_dark_mode(True)
+            dlg._on_theme_mode_toggled(True)
+            # Should restore previously active dark palette ("dark_obsidian"), not reset to "dark_monokai"
+            self.assertEqual(tm.current_theme_id, "dark_obsidian")
+            self.assertEqual(dlg.preset_combo.currentData(), "dark_obsidian")
+
+            # Switch back to Light mode
+            dlg.mode_toggle.set_dark_mode(False)
+            dlg._on_theme_mode_toggled(False)
+            # Should remember the updated light palette "light_snow"
+            self.assertEqual(tm.current_theme_id, "light_snow")
+            self.assertEqual(dlg.preset_combo.currentData(), "light_snow")
+
+            # Click Done: commits both palettes to config
+            dlg._on_done_clicked()
+            self.assertEqual(cfg.get("theme_id"), "light_snow")
+            self.assertEqual(cfg.get("dark_theme_id"), "dark_obsidian")
+            self.assertEqual(cfg.get("light_theme_id"), "light_snow")
+
+            # Verify reject() cleanly restores initial state
+            dlg2 = ThemeDialog(tm, config=cfg)
+            # In dlg2, change preset to light_soft_pink
+            pink_idx = dlg2.preset_combo.findData("light_soft_pink")
+            dlg2.preset_combo.setCurrentIndex(pink_idx)
+            self.assertEqual(tm.current_theme_id, "light_soft_pink")
+            # Cancel dialog
+            dlg2.reject()
+            self.assertEqual(tm.current_theme_id, "light_snow")
+            self.assertEqual(cfg.get("light_theme_id"), "light_snow")
+
+    # ─── 42. TRANSPARENCY TOGGLE PAIR B SVG RENDERERS & DYNAMIC TINTING ──
+    def test_transparency_toggle_pair_b_svg_renderers_and_dynamic_tinting(self):
+        from src.ui.toggle_switch import TransparencyToggle
+
+        toggle = TransparencyToggle(is_transparency=True)
+        self.assertTrue(toggle.is_transparency())
+        self.assertTrue(toggle._trans_renderer.isValid())
+        self.assertTrue(toggle._solid_renderer.isValid())
+
+        # Test toggle to False
+        toggle.set_transparency(False, animate=False)
+        self.assertFalse(toggle.is_transparency())
+        self.assertEqual(toggle.offset, 0.0)
+
+        # Test dark track tinting
+        toggle.set_off_track_color("#374151")
+        self.assertTrue(toggle._solid_renderer.isValid())
+
+        # Test light track tinting (high luminance triggers dark slate icon)
+        toggle.set_off_track_color("#D1D5DB")
+        self.assertTrue(toggle._solid_renderer.isValid())
+
+
+
 
 if __name__ == "__main__":
     unittest.main()

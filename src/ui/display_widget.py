@@ -9,7 +9,7 @@ Replicates native Windows Calculator input ergonomics:
 
 import re
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QCursor, QKeyEvent
+from PyQt6.QtGui import QFont, QFontMetrics, QCursor, QKeyEvent
 from PyQt6.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QApplication
 )
@@ -29,6 +29,8 @@ class CalculatorDisplayEdit(QLineEdit):
     evaluateRequested = pyqtSignal()
     clearRequested = pyqtSignal()
     clearEntryRequested = pyqtSignal()
+    unaryRequested = pyqtSignal(str)
+    parenthesisRequested = pyqtSignal(str)
 
     def __init__(self, text: str = "0", parent=None):
         super().__init__(text, parent)
@@ -68,6 +70,17 @@ class CalculatorDisplayEdit(QLineEdit):
                 cb_text = QApplication.clipboard().text()
                 sanitized = validate_and_sanitize_input(cb_text, self.mode, self.radix)
                 if sanitized:
+                    if self.mode != "Programmer":
+                        def _cap_digits(m):
+                            sign = m.group(1) or ""
+                            int_part = m.group(2)
+                            frac_part = m.group(3) or ""
+                            if frac_part:
+                                frac_digits = frac_part[1:]
+                                avail = max(0, 16 - len(int_part))
+                                return f"{sign}{int_part[:16]}.{frac_digits[:avail]}"
+                            return f"{sign}{int_part[:16]}"
+                        sanitized = re.sub(r'(-?)(\d+)(\.\d+)?', _cap_digits, sanitized)
                     cur = self.text()
                     if cur == "0":
                         new_val = sanitized
@@ -81,127 +94,14 @@ class CalculatorDisplayEdit(QLineEdit):
                 self.selectAll()
                 return
 
-        # Evaluation & Clear Keys
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Equal):
-            self.evaluateRequested.emit()
-            return
-        elif key == Qt.Key.Key_Escape:
-            self.clearRequested.emit()
-            return
-        elif key == Qt.Key.Key_Delete:
-            self.clearEntryRequested.emit()
-            return
-        elif key == Qt.Key.Key_Backspace:
-            if self.isReadOnly():
-                self.clearRequested.emit()
-                return
-            cur = self.text()
-            if cur == "0":
-                return
-            new_val = cur[:-1] if len(cur) > 1 else "0"
-            if not new_val or new_val == "-":
-                new_val = "0"
-            new_val = sanitize_leading_zeros(new_val, self.mode)
-            self.setText(new_val)
-            self.setCursorPosition(len(new_val))
-            self.textEdited.emit(new_val)
+        # Forward all calculator keystrokes to MainWindow for uniform handling & button flash animations
+        win = self.window()
+        if win and hasattr(win, "keyPressEvent") and win is not self:
+            win.keyPressEvent(event)
+            event.accept()
             return
 
-        # Operator keys in Standard mode (trigger calculation operator, don't write symbol into operand)
-        if self.mode == "Standard":
-            op_map = {
-                Qt.Key.Key_Plus: "+",
-                Qt.Key.Key_Minus: "−",
-                Qt.Key.Key_Asterisk: "×",
-                Qt.Key.Key_Slash: "÷",
-                Qt.Key.Key_Percent: "%",
-            }
-            if key in op_map:
-                self.operatorRequested.emit(op_map[key])
-                return
-
-        # Operator keys in Programmer mode
-        if self.mode == "Programmer":
-            prog_op_map = {
-                Qt.Key.Key_Plus: "+",
-                Qt.Key.Key_Minus: "−",
-                Qt.Key.Key_Asterisk: "×",
-                Qt.Key.Key_Slash: "÷",
-                Qt.Key.Key_Percent: "%",
-                Qt.Key.Key_Ampersand: "AND",
-                Qt.Key.Key_Bar: "OR",
-                Qt.Key.Key_AsciiCircum: "XOR",
-                Qt.Key.Key_AsciiTilde: "NOT",
-            }
-            if key in prog_op_map:
-                self.operatorRequested.emit(prog_op_map[key])
-                return
-
-        char = event.text()
-        if not char:
-            event.ignore()
-            return
-
-        # Decimal point mapping
-        if char in (",", "."):
-            if self.mode == "Programmer":
-                event.ignore()
-                return
-            char = "."
-
-        # Check whitelist for current mode & radix
-        if not is_char_allowed(char, self.mode, self.radix):
-            event.ignore()
-            return
-
-        # Programmer mode hex uppercase normalization
-        if self.mode == "Programmer" and self.radix.upper() == "HEX":
-            char = char.upper()
-
-        cur = self.text()
-        if self.isReadOnly() or cur in ("0", "-0"):
-            if cur == "-0":
-                if char == ".":
-                    new_val = "-0."
-                elif char == "0":
-                    new_val = "-0"
-                else:
-                    new_val = f"-{char}"
-            else:  # cur == "0" or error text
-                if char == ".":
-                    new_val = "0."
-                elif char == "0":
-                    new_val = "0"
-                elif self.mode == "Scientific" and char in ("(", "["):
-                    new_val = char
-                else:
-                    # Clean replacement of leading zero with the entered character
-                    new_val = char
-        else:
-            if char == ".":
-                # Disallow duplicate decimal point in current token
-                tokens = re.split(r'[\s\+\-\*\/\^\%\(\)]+', cur)
-                last_tok = tokens[-1] if tokens else ""
-                if "." in last_tok:
-                    event.ignore()
-                    return
-                new_val = cur + "."
-            else:
-                if cur.endswith(" 0") and char.isalnum() and char != "0":
-                    new_val = cur[:-1] + char
-                elif cur.endswith("(0") and char.isalnum() and char != "0":
-                    new_val = cur[:-1] + char
-                elif cur.endswith(" 0") and char == "0":
-                    event.ignore()
-                    return
-                else:
-                    new_val = cur + char
-
-        new_val = sanitize_leading_zeros(new_val, self.mode)
-        self.setText(new_val)
-        self.setCursorPosition(len(new_val))
-        self.textEdited.emit(new_val)
-        event.accept()
+        event.ignore()
 
 
 class DualTierDisplay(QFrame):
@@ -211,6 +111,8 @@ class DualTierDisplay(QFrame):
     equalsClicked = pyqtSignal()
     clearClicked = pyqtSignal()
     clearEntryClicked = pyqtSignal()
+    unaryClicked = pyqtSignal(str)
+    parenthesisClicked = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -255,6 +157,8 @@ class DualTierDisplay(QFrame):
         self.primary_display.evaluateRequested.connect(self.equalsClicked)
         self.primary_display.clearRequested.connect(self.clearClicked)
         self.primary_display.clearEntryRequested.connect(self.clearEntryClicked)
+        self.primary_display.unaryRequested.connect(self.unaryClicked)
+        self.primary_display.parenthesisRequested.connect(self.parenthesisClicked)
 
         self._auto_scale_font("0")
         layout.addWidget(self.primary_display, stretch=1)
@@ -346,7 +250,7 @@ class DualTierDisplay(QFrame):
     def _auto_scale_font(self, text: str):
         if self._is_error_text(text):
             font = self.primary_display.font()
-            font.setPointSize(26 if len(text) <= 16 else 20)
+            font.setPointSize(26 if len(text) <= 16 else 18)
             self.primary_display.setFont(font)
             return
 
@@ -359,13 +263,31 @@ class DualTierDisplay(QFrame):
             font_size = 26
         elif length <= 24:
             font_size = 20
+        elif length <= 32:
+            font_size = 15
         else:
-            font_size = 16
+            font_size = 12
+
+        # Use QFontMetrics to ensure text never overflows the width of the display edit
+        available_w = self.primary_display.width() - 24
+        if available_w > 50:
+            test_font = self.primary_display.font()
+            test_font.setPointSize(font_size)
+            fm = QFontMetrics(test_font)
+            while font_size > 11 and fm.horizontalAdvance(text) > available_w:
+                font_size -= 1
+                test_font.setPointSize(font_size)
+                fm = QFontMetrics(test_font)
 
         font = self.primary_display.font()
         if font_size > 0:
             font.setPointSize(font_size)
             self.primary_display.setFont(font)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "primary_display"):
+            self._auto_scale_font(self.primary_display.text())
 
     def _on_ribbon_clicked(self, event):
         text = self.expression_label.text().replace("...", "").replace("=", "").strip()

@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+## [1.0.0] - 2026-11-20 (Official Release)
+
+### Added
+- Minimalist 4-Quadrant Checkerboard Transparency SVG Icon Pair (`src/ui/toggle_switch.py`):
+  - Installed Pair B vector icons into `TransparencyToggle` featuring a clean 2×2 window pane with diagonal translucent checkerboard quadrants for the ON state, and a matching solid opaque window pane for the OFF state.
+  - Implemented dynamic luminance-aware tinting for the OFF icon (`#4B5563` on light tracks, `#9CA3AF` on dark tracks) ensuring high contrast and adherence to dynamic SVG icon theming guidelines.
+- Dual-Mode Color Palette Memory & Schema v3 Migration (`src/core/config.py`, `src/ui/theme_dialog.py`):
+  - Added dedicated `dark_theme_id` and `light_theme_id` configuration keys alongside active `theme_id` to persist user-selected palettes independently across Dark and Light modes.
+  - Implemented automatic backward-compatible Schema v3 migration in `ConfigManager._migrate_schema`, safely inferring and migrating legacy v1 and v2 settings without overwriting user customizations.
+  - Updated `ThemeDialog._on_theme_mode_toggled` to dynamically restore the user's previously set palette for the toggled mode instead of resetting to the first item in the preset dropdown.
+  - Synced preset dropdowns, custom theme selectors, import/export flows, Done button commits, and Esc/reject rollbacks to guarantee persistent dual-theme state.
+- Large Number Scientific Display & Text Field Width Protection (`src/core/engine.py`, `src/ui/display_widget.py`):
+  - Automatically formats numbers with magnitude $\ge 10^{16}$ or $< 10^{-7}$ in scientific notation (e.g. `1.485715964482e+138` for `fact(90)`) in Standard and Scientific modes, eliminating text field overflow and endless comma-separated zero strings.
+  - Enhanced `DualTierDisplay._auto_scale_font` with dynamic `QFontMetrics` measurement and resize events, dynamically adjusting point size to guarantee text never clips or overflows the display width.
+- 16-Digit Input Cap (`src/core/state.py`, `src/ui/display_widget.py`):
+  - Enforced strict 16-digit maximum limit per operand across all input pathways (keypad clicks, window key events, direct display typing, and clipboard paste) matching Windows 11 Calculator ergonomics.
+  - Added word-size radix bounds for Programmer mode (HEX: 16 chars, DEC: 20 chars, OCT: 22 chars, BIN: 64 chars).
+- Open Parentheses Tracking & Dynamic Keypad Corner Badge (`src/core/state.py`, `src/ui/keypad_widget.py`, `src/ui/main_window.py`):
+  - Implemented real-time `open_parentheses_count` tracking in `CalculatorState` with a hard limit of 50 open brackets.
+  - Re-architected open parenthesis button with custom `KeypadParenButton` featuring a prominent centered `(` and a dedicated bottom-right corner badge label displaying the open brackets count in crisp 11px bold `Segoe UI Variable Text`, with dynamic theme tinting and automatic visibility toggling.
+  - Added auto-insertion of multiplication operator `×` when placing brackets beside a number, evaluated expression, or closing bracket (e.g. `((((0))) × ((` and `5 × (`).
+  - Implemented inner subexpression evaluation upon closing `)` and automatic bracket balancing on `=` evaluation (e.g. `5 × (2 + 3` evaluates to `25` with pinned formula `5 × (2 + 3) =`).
+  - Synced backspace over parentheses across all expression states to decrement unclosed bracket counts accurately.
+- Unified Keyboard Event Routing & Keypad Button Press Animations (`src/ui/display_widget.py`, `src/ui/main_window.py`, `src/ui/keypad_widget.py`, `src/ui/theme_manager.py`):
+  - Fixed issue where keypad buttons did not show the pressed/down animation when the primary text field was in focus; forwarded all calculator keystrokes uniformly through `MainWindow.keyPressEvent`.
+  - Added missing `:pressed` stylesheet rules for `QPushButton.equalsKey` and `QPushButton.fnKey` in `ThemeManager` so equals, parentheses, clear, backspace, and factorial buttons visibly react to keyboard press animations.
+  - Fixed issue where Enter and Return keys (both main Return and Numpad Enter) did not trigger the button pressed visual effect on `=`; installed global event filtering, set `Qt.FocusPolicy.NoFocus` across all keypad and memory buttons to prevent focus interception, and routed evaluation cleanly to flash the equals button.
+  - Added full, symmetrical support for both Numpad and Num Row inputs across digits (`0-9`), arithmetic operators (`+`, `-`, `*`, `/`, `%`), brackets (`(`, `)`), factorial (`!`), decimal (`.`, `,`), and evaluation (`=`, Enter).
+  - Ensured every valid keystroke triggers the tactile button press flash animation (110ms) on the corresponding keypad button whether the display edit is in focus or not.
+- Exclamation Mark (`!`) Factorial Keyboard Trigger (`src/ui/main_window.py`, `src/ui/display_widget.py`, `src/core/input_validator.py`):
+  - Added keyboard handler for `!` and `Key_Exclam` in `MainWindow` and `CalculatorDisplayEdit` to trigger `n!` (`fact`) on the active operand in Scientific mode with keypad button flash animation.
+  - Added `!` to allowed character whitelist in `input_validator.py`.
+
+### Fixed
+- Percentage Calculation Logic (`src/core/state.py`):
+  - Fixed mathematical flaw where pressing `%` in arithmetic operations (e.g. `20 - 10% =`) mistakenly evaluated the entire expression and set `active_token` to the total result (`18`), causing subsequent `=` evaluation to double-apply the operator (`20 - 18 = 2`, effectively calculating `20 - 90%`).
+  - Implemented standard Windows Calculator percentage behavior:
+    - Addition/subtraction (`A ± B%`): calculates `B%` of `A` (`A * B / 100`) and populates the active token with this delta (`2`), previewing `A ± delta` (`18`) and evaluating correctly to `18` on `=`.
+    - Multiplication/division (`A * B%`, `A / B%`): converts `B%` to `B / 100` (`0.1`), evaluating `20 * 0.1 = 2` and `20 / 0.1 = 200`.
+    - Chained operations (`10 + 20 - 10% =`): computes percentage against accumulated preceding terms (`10% of 30 = 3`), yielding `27`.
+    - Standalone percentage (`50%`): evaluates cleanly to `0.5`.
+    - Empty active token with trailing operator (`20 - %`): repeats base operand (`20% of 20 = 4`), yielding `16`.
+- Expression Parsing & Evaluation Enhancements (`src/core/engine.py`):
+  - Incomplete Expression Detection (`is_expression_incomplete`): Fixed postfix percentages directly attached to numbers or groups (e.g. `50%`, `(2+3)%`, `20 - 10%`) being incorrectly flagged as incomplete binary operators, which had suppressed live preview calculations.
+  - Contextual Parenthesized Percentages: Added full support for parenthesized bases in percentage formulas (e.g. `(50 + 50) - 10% = 90`, `(20 + 30)% = 0.5`).
+  - Integer Redundant Leading Zeros: Normalized numbers with redundant leading zeros (e.g. `05 + 2 = 7`, `007 * 3 = 21`) that previously triggered Python `SyntaxError: leading zeros in decimal integer literals are not permitted` and showed "Invalid input".
+  - Formatted Numbers with Grouping Commas: Stripped digit grouping commas (e.g. `1,000 + 200 = 1,200`) so pasted or restored formatted strings evaluate seamlessly.
+  - Factorial Exclamation Mark Notation: Added parser translation for factorial notation (e.g. `5! = 120`, `(3+2)! = 120`).
+  - Implicit Multiplication: Added support for implicit multiplication with math functions (e.g. `2sqrt(4) = 4`, `(2)sqrt(4) = 4`, `3sin(30) = 1.5`).
+
+### Changed
+- Version Marking (`src/core/updater.py`, `.github/workflows/release.yml`):
+  - Promoted release to `v1.0.0` as official stable release.
+  - Marked `v0.7.0` as `not_recommended`.
+  - Marked `v0.5.0` and `v0.6.0` as `deprecated`.
+
 ## [0.7.0] - 2026-11-18 (Official Release)
 
 ### Changed

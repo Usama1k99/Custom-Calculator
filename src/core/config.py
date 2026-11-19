@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "schema_version": CURRENT_SCHEMA_VERSION,
     "theme_id": "dark_monokai",
+    "dark_theme_id": "dark_monokai",
+    "light_theme_id": "light_soft_pink",
     "mode": "Standard",
     "converter_category": "Length",
     "angle_mode": "DEG",
@@ -89,6 +91,19 @@ class ConfigManager:
                 data.pop(legacy_key, None)
                 modified = True
 
+        # Migration -> Schema v3:
+        # Separate dark and light theme tracking
+        active_theme = data.get("theme_id", "dark_monokai")
+        is_light = str(active_theme).startswith("light_")
+
+        if "dark_theme_id" not in data:
+            data["dark_theme_id"] = "dark_monokai" if is_light else active_theme
+            modified = True
+
+        if "light_theme_id" not in data:
+            data["light_theme_id"] = active_theme if is_light else "light_soft_pink"
+            modified = True
+
         if data.get("schema_version") != CURRENT_SCHEMA_VERSION:
             data["schema_version"] = CURRENT_SCHEMA_VERSION
             modified = True
@@ -132,6 +147,18 @@ class ConfigManager:
             return self.config.get("transparency_enabled", default if default is not None else True)
         if key == "blur_intensity":
             return "none"
+        if key == "dark_theme_id":
+            val = self.config.get("dark_theme_id")
+            if val is not None:
+                return val
+            curr = self.config.get("theme_id", "dark_monokai")
+            return "dark_monokai" if str(curr).startswith("light_") else curr
+        if key == "light_theme_id":
+            val = self.config.get("light_theme_id")
+            if val is not None:
+                return val
+            curr = self.config.get("theme_id", "light_soft_pink")
+            return curr if str(curr).startswith("light_") else "light_soft_pink"
         return self.config.get(key, default)
 
     def set(self, key: str, value: Any, auto_save: bool = True):

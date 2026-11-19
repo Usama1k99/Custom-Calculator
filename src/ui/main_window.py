@@ -152,6 +152,7 @@ class MainWindow(QMainWindow):
         self.hamburger_btn = QPushButton()
         self.hamburger_btn.setObjectName("HamburgerBtn")
         self.hamburger_btn.setFixedSize(36, 32)
+        self.hamburger_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.hamburger_btn.setToolTip("Open Navigation Menu")
         self.hamburger_btn.clicked.connect(self._toggle_sidebar)
         header_layout.addWidget(self.hamburger_btn)
@@ -165,6 +166,7 @@ class MainWindow(QMainWindow):
         # Always-on-top button
         self.pin_btn = QPushButton("◳")
         self.pin_btn.setProperty("class", "iconHeaderBtn")
+        self.pin_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.pin_btn.setCheckable(True)
         self.pin_btn.setChecked(self.config.get("always_on_top", False))
         self.pin_btn.setToolTip("Keep on top")
@@ -174,6 +176,7 @@ class MainWindow(QMainWindow):
         # History button
         self.history_btn = QPushButton("◷")
         self.history_btn.setProperty("class", "iconHeaderBtn")
+        self.history_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.history_btn.setToolTip("History (Ctrl+H)")
         self.history_btn.clicked.connect(self._toggle_history_drawer)
         header_layout.addWidget(self.history_btn)
@@ -196,9 +199,11 @@ class MainWindow(QMainWindow):
         self.display.expressionClicked.connect(self.state.restore_expression)
         self.display.userTyped.connect(self._on_user_typed_in_display)
         self.display.operatorClicked.connect(self.state.input_operator)
-        self.display.equalsClicked.connect(self.state.evaluate)
+        self.display.equalsClicked.connect(self._on_equals_clicked)
         self.display.clearClicked.connect(self.state.clear_all)
         self.display.clearEntryClicked.connect(self.state.clear_entry)
+        self.display.unaryClicked.connect(self._on_display_unary_clicked)
+        self.display.parenthesisClicked.connect(self._on_display_parenthesis_clicked)
         calc_page_layout.addWidget(self.display)
 
         # Memory Bar (MC, MR, M+, M-, MS)
@@ -219,6 +224,7 @@ class MainWindow(QMainWindow):
         for label, handler in mem_buttons:
             btn = QPushButton(label)
             btn.setProperty("class", "memBtn")
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             btn.clicked.connect(handler)
             mem_layout.addWidget(btn)
             self.mem_widgets[label] = btn
@@ -231,13 +237,13 @@ class MainWindow(QMainWindow):
         self.keypad.digitClicked.connect(self.state.input_digit)
         self.keypad.operatorClicked.connect(self.state.input_operator)
         self.keypad.unaryFunctionClicked.connect(self.state.input_unary_operation)
-        self.keypad.equalsClicked.connect(self.state.evaluate)
+        self.keypad.equalsClicked.connect(self._on_equals_clicked)
         self.keypad.clearClicked.connect(self.state.clear_all)
         self.keypad.clearEntryClicked.connect(self.state.clear_entry)
         self.keypad.backspaceClicked.connect(self.state.backspace)
         self.keypad.negateClicked.connect(self.state.negate)
         self.keypad.percentageClicked.connect(self.state.input_percentage)
-        self.keypad.parenthesisClicked.connect(self.state.input_digit)
+        self.keypad.parenthesisClicked.connect(self.state.input_parenthesis)
         self.keypad.angleModeToggled.connect(self._on_angle_mode_toggled)
         self.keypad.feToggled.connect(self._on_fe_toggled)
 
@@ -280,11 +286,41 @@ class MainWindow(QMainWindow):
         self.sidebar.closeRequested.connect(self._toggle_sidebar)
         self.sidebar.setVisible(False)
 
+        # Global event filter to ensure Enter/Return/Equals reliably evaluates and flashes equals button
+        app_inst = QApplication.instance()
+        if app_inst:
+            app_inst.installEventFilter(self)
+
+    def _on_equals_clicked(self):
+        self.state.evaluate()
+        self.keypad.flash_button("=")
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            text = event.text()
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Equal) or text == "=":
+                if hasattr(self, "stack") and hasattr(self, "calc_page") and self.stack.currentWidget() == self.calc_page:
+                    self._on_equals_clicked()
+                    return True
+        return super().eventFilter(watched, event)
+
     def _on_user_typed_in_display(self, text: str):
         sanitized = sanitize_leading_zeros(text, self.state.mode)
         self.state.active_token = sanitized
         self.state.is_evaluated = False
         self.state._notify()
+
+    def _on_display_unary_clicked(self, func_name: str):
+        self.state.input_unary_operation(func_name)
+        if func_name == "fact":
+            self.keypad.flash_button("n!")
+        else:
+            self.keypad.flash_button(func_name)
+
+    def _on_display_parenthesis_clicked(self, paren: str):
+        self.state.input_parenthesis(paren)
+        self.keypad.flash_button(paren)
 
     def _on_calculator_state_changed(self, is_evaluated: bool, expression_trail: str, active_token: str, live_preview: str):
         if is_evaluated:
@@ -293,6 +329,10 @@ class MainWindow(QMainWindow):
                 self.history_drawer.refresh_history()
         else:
             self.display.set_drafting_state(expression_trail, active_token, live_preview)
+
+        # Sync open parentheses count on the keypad button
+        count = getattr(self.state, "open_parentheses_count", 0)
+        self.keypad.update_open_parentheses_count(count)
 
     def _toggle_sidebar(self):
         is_visible = not self.sidebar.isVisible()
@@ -331,6 +371,7 @@ class MainWindow(QMainWindow):
             self.state.radix = radix
             self.stack.setCurrentIndex(0)
             self.keypad.set_mode(mode)
+            self.keypad.update_open_parentheses_count(getattr(self.state, "open_parentheses_count", 0))
             if mode == "Scientific":
                 self.keypad.set_angle_mode_text(self.engine.angle_mode)
             self.keypad.update_theme_icons(self.theme_mgr.current_tokens.get("text_primary", "#FFFFFF"))
@@ -594,6 +635,7 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event: QKeyEvent):
         key = event.key()
         modifiers = event.modifiers()
+        text = event.text()
 
         # Keyboard shortcuts
         if modifiers & Qt.KeyboardModifier.ControlModifier:
@@ -610,100 +652,118 @@ class MainWindow(QMainWindow):
                 self.display.copy_to_clipboard()
                 return
 
-        # Numpad & Standard Digits
-        if Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
-            digit = chr(ord('0') + (key - Qt.Key.Key_0))
-            self.state.input_digit(digit)
-            self.keypad.flash_button(digit)
-            return
-
-        # Hex digits in Programmer Mode
-        if Qt.Key.Key_A <= key <= Qt.Key.Key_F:
-            if self.state.mode == "Programmer":
-                char = chr(ord('A') + (key - Qt.Key.Key_A))
-                self.state.input_digit(char)
-                self.keypad.flash_button(char)
+        # 1. Factorial (!) in Scientific mode (Num Row Shift+1 or Key_Exclam)
+        if key == Qt.Key.Key_Exclam or text == "!":
+            if self.state.mode == "Scientific":
+                self.state.input_unary_operation("fact")
+                self.keypad.flash_button("n!")
                 return
-            elif self.state.mode == "Scientific":
-                char = chr(ord('a') + (key - Qt.Key.Key_A))
-                if is_char_allowed(char, "Scientific"):
-                    self.display.primary_display.setFocus()
-                    QApplication.sendEvent(self.display.primary_display, event)
-                    return
-            return
 
-        # Parentheses (Scientific and Programmer modes)
-        if key == Qt.Key.Key_ParenLeft:
+        # 2. Parentheses (Num Row Shift+9, Shift+0 or Key_ParenLeft / Key_ParenRight)
+        if key == Qt.Key.Key_ParenLeft or text == "(":
             if self.state.mode in ("Scientific", "Programmer"):
-                self.state.input_digit("(")
+                self.state.input_parenthesis("(")
                 self.keypad.flash_button("(")
             return
-        elif key == Qt.Key.Key_ParenRight:
+        elif key == Qt.Key.Key_ParenRight or text == ")":
             if self.state.mode in ("Scientific", "Programmer"):
-                self.state.input_digit(")")
+                self.state.input_parenthesis(")")
                 self.keypad.flash_button(")")
             return
 
-        # Exponentiation / XOR
-        if key == Qt.Key.Key_AsciiCircum:
+        # 3. Arithmetic Operators: Multiply, Add, Percentage, Subtract, Divide
+        # Multiplication (Numpad * or Num Row Shift+8)
+        if key == Qt.Key.Key_Asterisk or text in ("*", "×"):
+            self.state.input_operator("×")
+            self.keypad.flash_button("×")
+            return
+        # Addition (Numpad + or Num Row Shift+=)
+        elif key == Qt.Key.Key_Plus or text == "+":
+            self.state.input_operator("+")
+            self.keypad.flash_button("+")
+            return
+        # Percentage (Num Row Shift+5)
+        elif key == Qt.Key.Key_Percent or text == "%":
+            self.state.input_percentage()
+            self.keypad.flash_button("%")
+            return
+        # Subtraction (Numpad - or Num Row -)
+        elif (key == Qt.Key.Key_Minus or text in ("-", "−")) and not (modifiers & Qt.KeyboardModifier.ShiftModifier):
+            self.state.input_operator("−")
+            self.keypad.flash_button("−")
+            return
+        # Division (Numpad / or Num Row /)
+        elif (key == Qt.Key.Key_Slash or text in ("/", "÷")) and not (modifiers & Qt.KeyboardModifier.ShiftModifier):
+            self.state.input_operator("÷")
+            self.keypad.flash_button("÷")
+            return
+
+        # 4. Exponentiation / XOR (Num Row Shift+6)
+        if key == Qt.Key.Key_AsciiCircum or text == "^":
             if self.state.mode == "Scientific":
                 self.state.input_operator("^")
             elif self.state.mode == "Programmer":
                 self.state.input_operator("XOR")
+                self.keypad.flash_button("XOR")
             return
 
-        # Bitwise operations in Programmer mode
+        # 5. Bitwise operations in Programmer mode
         if self.state.mode == "Programmer":
-            if key == Qt.Key.Key_Ampersand:
+            if key == Qt.Key.Key_Ampersand or text == "&":
                 self.state.input_operator("AND")
+                self.keypad.flash_button("AND")
                 return
-            elif key == Qt.Key.Key_Bar:
+            elif key == Qt.Key.Key_Bar or text == "|":
                 self.state.input_operator("OR")
+                self.keypad.flash_button("OR")
                 return
-            elif key == Qt.Key.Key_AsciiTilde:
+            elif key == Qt.Key.Key_AsciiTilde or text == "~":
                 self.state.input_unary_operation("NOT")
+                self.keypad.flash_button("NOT")
                 return
 
-        # Operators & Controls
-        if key in (Qt.Key.Key_Period, Qt.Key.Key_Comma):
-            if self.state.mode == "Programmer":
-                return  # Decimal point is strictly forbidden in Programmer mode
-            self.state.input_digit(".")
-            self.keypad.flash_button(".")
-        elif key == Qt.Key.Key_Plus:
-            self.state.input_operator("+")
-            self.keypad.flash_button("+")
-        elif key == Qt.Key.Key_Minus:
-            self.state.input_operator("−")
-            self.keypad.flash_button("−")
-        elif key == Qt.Key.Key_Asterisk:
-            self.state.input_operator("×")
-            self.keypad.flash_button("×")
-        elif key == Qt.Key.Key_Slash:
-            self.state.input_operator("÷")
-            self.keypad.flash_button("÷")
-        elif key in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            self.state.evaluate()
-            self.keypad.flash_button("=")
-        elif key == Qt.Key.Key_Backspace:
+        # 6. Evaluation (=, Enter, Return)
+        if key in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Equal) or text == "=":
+            self._on_equals_clicked()
+            return
+
+        # 7. Decimal Point (Numpad . or Num Row .)
+        if (key in (Qt.Key.Key_Period, Qt.Key.Key_Comma) or text in (".", ",")) and not (modifiers & Qt.KeyboardModifier.ShiftModifier):
+            if self.state.mode != "Programmer":
+                self.state.input_digit(".")
+                self.keypad.flash_button(".")
+            return
+
+        # 8. Digits 0-9 (Both Numpad and Num Row)
+        if (text and text.isdigit()) or (Qt.Key.Key_0 <= key <= Qt.Key.Key_9 and not (modifiers & Qt.KeyboardModifier.ShiftModifier)):
+            digit = text if (text and text.isdigit()) else chr(ord('0') + (key - Qt.Key.Key_0))
+            self.state.input_digit(digit)
+            self.keypad.flash_button(digit)
+            return
+
+        # 9. Hex digits in Programmer Mode (A-F)
+        if self.state.mode == "Programmer":
+            if Qt.Key.Key_A <= key <= Qt.Key.Key_F or (text and text.upper() in "ABCDEF"):
+                char = text.upper() if (text and text.upper() in "ABCDEF") else chr(ord('A') + (key - Qt.Key.Key_A))
+                self.state.input_digit(char)
+                self.keypad.flash_button(char)
+                return
+
+        # 10. Controls (Backspace, Clear, Clear Entry)
+        if key == Qt.Key.Key_Backspace:
             self.state.backspace()
             self.keypad.flash_button("⌫")
+            return
         elif key == Qt.Key.Key_Escape:
             self.state.clear_all()
             self.keypad.flash_button("C")
+            return
         elif key == Qt.Key.Key_Delete:
             self.state.clear_entry()
             self.keypad.flash_button("CE")
-        elif key == Qt.Key.Key_Percent:
-            self.state.input_percentage()
-        elif self.state.mode == "Scientific" and event.text():
-            char = event.text()
-            if is_char_allowed(char, "Scientific"):
-                self.display.primary_display.setFocus()
-                QApplication.sendEvent(self.display.primary_display, event)
-                return
-        else:
-            super().keyPressEvent(event)
+            return
+
+        super().keyPressEvent(event)
 
     def changeEvent(self, event):
         super().changeEvent(event)

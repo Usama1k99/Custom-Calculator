@@ -77,6 +77,76 @@ class SciDropdownButton(QPushButton):
         self.setMinimumWidth(text_w + 18 + 12 + 28)
 
 
+class KeypadParenButton(QPushButton):
+    """
+    Open parenthesis button with a prominent '(' and a dedicated
+    bottom-right corner badge indicating the number of open parentheses.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setProperty("class", "calcKey fnKey")
+        self.setObjectName("Key_(")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self.lbl_paren = QLabel("(", self)
+        self.lbl_paren.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_paren.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.lbl_paren.setStyleSheet(
+            "background: transparent; border: none; font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif; font-size: 17px; font-weight: 500; color: #FFFFFF;"
+        )
+
+        self.lbl_badge = QLabel("", self)
+        self.lbl_badge.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        self.lbl_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.lbl_badge.setStyleSheet(
+            "background: transparent; border: none; font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: #CCCCCC;"
+        )
+        self.lbl_badge.setVisible(False)
+        self._count = 0
+        self._text_color = "#FFFFFF"
+
+    def text(self) -> str:
+        return self.lbl_paren.text()
+
+    def set_open_count(self, count: int):
+        self._count = count
+        if count <= 0:
+            self.lbl_badge.setText("")
+            self.lbl_badge.setVisible(False)
+            self.setToolTip("Open parenthesis")
+        else:
+            self.lbl_badge.setText(str(count))
+            self.lbl_badge.setVisible(True)
+            self.setToolTip(f"Open parenthesis ({count} open)")
+        self._reposition()
+
+    def update_theme(self, text_color: str):
+        self._text_color = text_color
+        self.lbl_paren.setStyleSheet(
+            f"background: transparent; border: none; font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif; font-size: 17px; font-weight: 500; color: {text_color};"
+        )
+        self.lbl_badge.setStyleSheet(
+            f"background: transparent; border: none; font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif; font-size: 11px; font-weight: 700; color: {text_color};"
+        )
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition()
+
+    def _reposition(self):
+        w = self.width()
+        h = self.height()
+        if w <= 0 or h <= 0:
+            return
+        offset_x = -4 if self._count > 0 else 0
+        self.lbl_paren.setGeometry(offset_x, 0, w, h)
+        bw = 24
+        bh = 16
+        self.lbl_badge.setGeometry(w - bw - 6, h - bh - 5, bw, bh)
+
 
 class KeypadWidget(QWidget):
     # Signals
@@ -138,6 +208,12 @@ class KeypadWidget(QWidget):
                     self.btn_func.update_icons(text_color)
                 except RuntimeError:
                     pass
+        btn_paren = self.button_map.get("(")
+        if isinstance(btn_paren, KeypadParenButton):
+            try:
+                btn_paren.update_theme(text_color)
+            except RuntimeError:
+                pass
 
     def _init_ui(self):
         if self.layout() is not None:
@@ -578,24 +654,45 @@ class KeypadWidget(QWidget):
         for r, row in enumerate(layout_map):
             for c, item in enumerate(row):
                 label, style_class, handler = item
-                btn = QPushButton(label)
-                if label == "⌫":
-                    btn.setText("")
-                    btn.setIcon(get_themed_icon("Backspace", self._current_text_color, size=20))
-                    btn.setIconSize(QSize(20, 20))
-                btn.setProperty("class", f"calcKey {style_class}")
-                btn.setObjectName(f"Key_{label}")
-                btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn.setSizePolicy(
-                    btn.sizePolicy().Policy.Expanding,
-                    btn.sizePolicy().Policy.Expanding
-                )
+                if label == "(":
+                    btn = KeypadParenButton(self)
+                else:
+                    btn = QPushButton(label)
+                    if label == "⌫":
+                        btn.setText("")
+                        btn.setIcon(get_themed_icon("Backspace", self._current_text_color, size=20))
+                        btn.setIconSize(QSize(20, 20))
+                    btn.setProperty("class", f"calcKey {style_class}")
+                    btn.setObjectName(f"Key_{label}")
+                    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn.setSizePolicy(
+                        btn.sizePolicy().Policy.Expanding,
+                        btn.sizePolicy().Policy.Expanding
+                    )
+
+                btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
                 if handler:
                     if callable(handler):
                         btn.clicked.connect(handler)
 
                 grid.addWidget(btn, r, c)
                 self.button_map[label] = btn
+
+    def update_open_parentheses_count(self, count: int):
+        btn = self.button_map.get("(")
+        if not btn:
+            for k, b in self.button_map.items():
+                if k.startswith("("):
+                    btn = b
+                    break
+        if btn:
+            if isinstance(btn, KeypadParenButton):
+                btn.set_open_count(count)
+            else:
+                if count <= 0:
+                    btn.setText("(")
+                else:
+                    btn.setText(f"({count}")
 
     def flash_button(self, label: str):
         key_alias = {
@@ -606,13 +703,25 @@ class KeypadWidget(QWidget):
             "Enter": "=",
             "Return": "=",
             "=": "=",
-            "Backspace": "⌫"
+            "Backspace": "⌫",
+            "!": "n!",
+            "fact": "n!",
+            "Escape": "C",
+            "Delete": "CE",
         }
         resolved = key_alias.get(label, label)
         btn = self.button_map.get(resolved)
+        if not btn and resolved.startswith("("):
+            btn = self.button_map.get("(")
+            if not btn:
+                for k, b in self.button_map.items():
+                    if k.startswith("("):
+                        btn = b
+                        break
         if btn:
             btn.setDown(True)
-            QTimer.singleShot(80, lambda b=btn: b.setDown(False))
+            btn.update()
+            QTimer.singleShot(120, lambda b=btn: (b.setDown(False), b.update()))
 
     def mousePressEvent(self, event):
         if hasattr(self, "trig_popover") and self.trig_popover.isVisible():

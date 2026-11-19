@@ -30,7 +30,10 @@ def is_expression_incomplete(expr: str) -> bool:
     if not expr or not expr.strip():
         return True
     s = expr.strip()
-    # Check if ends with binary operator, unary operator waiting for argument, open parenthesis, or comma
+    # A postfix percentage directly attached to a number or closing parenthesis with no whitespace
+    # (e.g. '50%', '(2+3)%') is a complete expression. Binary operators like '60 % ' remain incomplete.
+    if re.search(r'[\d\)]%$', s):
+        return False
     # Covers +, -, *, /, ×, ÷, −, %, ^, &, |, ~, <<, >>, <, >, <=, >=, ==, !=
     # and words AND, OR, XOR, NOT, mod, or opening parenthesis (
     op_pattern = r'([\+\-\*/%&\|\^×÷−~<>=]|<<|>>|\bAND\b|\bOR\b|\bXOR\b|\bNOT\b|\bmod\b|\(|,)\s*$'
@@ -103,6 +106,16 @@ class MathEngine:
         s = re.sub(r'\bXOR\b', '^', s, flags=re.IGNORECASE)
         s = re.sub(r'\bNOT\b', '~', s, flags=re.IGNORECASE)
 
+        # Remove digit grouping commas in formatted numbers (e.g. 1,000,000 -> 1000000)
+        s = re.sub(r'(?<=\d),(?=\d{3}(?:\D|$))', '', s)
+
+        # Normalize redundant leading zeros in decimal integers (e.g. 05 -> 5, 007 -> 7)
+        if mode != "Programmer":
+            s = re.sub(r'(?<![\.\d])0+([1-9]\d*|0)\b(?!\.)', r'\1', s)
+
+        # Support factorial exclamation mark notation: 5! -> fact(5), (2+3)! -> fact(2+3)
+        s = re.sub(r'(\b\d+|\([^\(\)]+\))!', r'fact(\1)', s)
+
         # Radix & constant normalization based on mode
         if mode == "Programmer":
             reserved_prog = {'and', 'or', 'xor', 'not', 'mod', 'lsh', 'rsh'}
@@ -121,27 +134,36 @@ class MathEngine:
             s = re.sub(r'(\b\d+(?:\.\d+)?)\s*e(?![a-zA-Z0-9_\+\-])', rf'\1*({math.e})', s)
             s = re.sub(r'(?<![a-zA-Z0-9_])e(?![a-zA-Z0-9_\+\-])', f'({math.e})', s)
 
-        # Handle percentages (contextual: only when attached as a percentage suffix like 10%, NOT binary modulo like 10 % 3)
-        # Case 1: Additive / Subtractive: A + B% -> A + (A * (B/100))
+        # Handle percentages (contextual: only when attached as a percentage suffix like 10% or (5+5)%, NOT binary modulo like 10 % 3)
+        # Case 1: Additive / Subtractive with parenthesized base: (A) + B% -> (A) + ((A) * (B / 100))
         s = re.sub(
-            r'(\b\d+(?:\.\d+)?)\s*([\+\-])\s*(\b\d+(?:\.\d+)?)\s*%(?!\s*\d)',
+            r'(\([^\(\)]+\))\s*([\+\-])\s*(\b\d+(?:\.\d+)?)\s*%(?!\s*[\da-zA-Z_])',
             r'\1 \2 (\1 * (\3 / 100))',
             s
         )
-        # Case 2: Multiplicative / Divisive: A * B% -> A * (B/100)
+        # Case 2: Additive / Subtractive: A + B% -> A + (A * (B/100))
         s = re.sub(
-            r'(\b\d+(?:\.\d+)?)\s*([\*/])\s*(\b\d+(?:\.\d+)?)\s*%(?!\s*\d)',
-            r'\1 \2 (\3 / 100)',
+            r'(\b\d+(?:\.\d+)?)\s*([\+\-])\s*(\b\d+(?:\.\d+)?)\s*%(?!\s*[\da-zA-Z_])',
+            r'\1 \2 (\1 * (\3 / 100))',
             s
         )
-        # Case 3: Standalone percentage: X% -> (X / 100)
-        s = re.sub(r'(\b\d+(?:\.\d+)?)\s*%(?!\s*\d)', r'(\1 / 100)', s)
+        # Case 3: Multiplicative / Divisive: A * B% -> A * (B/100)
+        s = re.sub(
+            r'([\*/])\s*(\b\d+(?:\.\d+)?)\s*%(?!\s*[\da-zA-Z_])',
+            r'\1 (\2 / 100)',
+            s
+        )
+        # Case 4: Parenthesized percentage: (50 + 50)% -> ((50 + 50) / 100)
+        s = re.sub(r'(\([^\(\)]+\))\s*%(?!\s*[\da-zA-Z_])', r'(\1 / 100)', s)
+        # Case 5: Standalone percentage: X% -> (X / 100)
+        s = re.sub(r'(\b\d+(?:\.\d+)?)\s*%(?!\s*[\da-zA-Z_])', r'(\1 / 100)', s)
 
         # Replace programmer & scientific mod operator after percentage handling
         s = re.sub(r'\bmod\b', '%', s, flags=re.IGNORECASE)
 
         # Handle incomplete expressions like "5 +" or "5 *" (Windows Calc behavior on '=': repeat operand)
-        trailing_op_match = re.search(r'([\+\-\*/%&|\^]|<<|>>)\s*$', s)
+        # Note: trailing '%' is NOT an incomplete operator when it's a percentage (already replaced above)
+        trailing_op_match = re.search(r'([\+\-\*/&|\^]|<<|>>|\bmod\b)\s*$', s, flags=re.IGNORECASE)
         if trailing_op_match:
             if not allow_incomplete:
                 return ""  # Incomplete, cannot evaluate in preview
@@ -159,8 +181,10 @@ class MathEngine:
         # Remove standalone empty parentheses e.g. "5 + ()" (protect function calls like rand())
         s = re.sub(r'(?<![a-zA-Z0-9_])\(\s*\)', '', s)
 
-        # Handle implicit multiplication: 2(3) -> 2*(3), (2)(3) -> (2)*(3), 2pi -> 2*pi
-        # Use word boundary \b to avoid breaking function names with digits like log2(8) or pow10(3)
+        # Handle implicit multiplication: 2(3) -> 2*(3), (2)(3) -> (2)*(3), 2pi -> 2*pi, 2sqrt(4) -> 2*sqrt(4)
+        if mode != "Programmer":
+            fns = 'sqrt|cbrt|sin|cos|tan|sec|csc|cot|log|log2|ln|abs|fact|recip'
+            s = re.sub(rf'(\b\d+(?:\.\d+)?|\))\s*({fns})\b', r'\1*\2', s)
         s = re.sub(r'\b(\d+)\s*\(', r'\1*(', s)
         s = re.sub(r'\)\s*\(', r')*(', s)
         s = re.sub(r'\)\s*(\d)', r')*\1', s)
@@ -204,7 +228,7 @@ class MathEngine:
                     return False, "Invalid input", None
 
                 dec_val = Decimal(str(result_val))
-                formatted = self.format_number(dec_val)
+                formatted = self.format_number(dec_val, mode=mode)
                 return True, formatted, dec_val
             else:
                 return False, "Invalid input", None
@@ -443,26 +467,40 @@ class MathEngine:
         else:
             raise NameError(f"Unknown function: {name}")
 
-    def format_number(self, val: Decimal) -> str:
+    def format_number(self, val: Decimal, mode: str = "Standard") -> str:
         """
         Formats a Decimal into a clean, human-readable string with proper digit grouping.
         Preserves signs correctly for negative fractional decimals (e.g. -0.95).
+        Automatically switches to clean scientific notation for numbers exceeding display
+        width (>= 1e16 or 0 < |x| < 1e-7) in non-Programmer modes.
         """
         is_negative = (val < 0) or (str(val).startswith("-") and val != 0)
         abs_val = abs(val)
 
         if self.scientific_notation:
-            res = f"{float(abs_val):.6e}".replace("+0", "+").replace("-0", "-")
+            res = f"{abs_val:.12e}".replace("+0", "+").replace("-0", "-")
+            if "e" in res:
+                mantissa, exp = res.split("e")
+                if "." in mantissa:
+                    mantissa = mantissa.rstrip("0").rstrip(".")
+                res = f"{mantissa}e{exp}"
             return f"-{res}" if is_negative and res != "0" else res
+
+        # Cap for text-field width in Standard and Scientific modes:
+        # Numbers >= 1e16 or tiny decimals < 1e-7 format in scientific notation
+        if mode != "Programmer":
+            if abs_val >= Decimal("1e16") or (abs_val > 0 and abs_val < Decimal("1e-7")):
+                res = f"{abs_val:.12e}".replace("+0", "+").replace("-0", "-")
+                if "e" in res:
+                    mantissa, exp = res.split("e")
+                    if "." in mantissa:
+                        mantissa = mantissa.rstrip("0").rstrip(".")
+                    res = f"{mantissa}e{exp}"
+                return f"-{res}" if is_negative and res != "0" else res
 
         if abs_val == abs_val.to_integral():
             int_val = int(abs_val)
             res = f"{int_val:,}"
-            return f"-{res}" if is_negative and res != "0" else res
-
-        f = float(abs_val)
-        if (0 < f < 1e-7) or f >= 1e16:
-            res = f"{f:.8e}".replace("+0", "+").replace("-0", "-")
             return f"-{res}" if is_negative and res != "0" else res
 
         normalized = abs_val.normalize()

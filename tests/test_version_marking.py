@@ -146,8 +146,8 @@ class TestVersionMarkingSystem(unittest.TestCase):
         # Setup mock releases where APP_VERSION is deprecated
         mock_releases = [
             {
-                "tag_name": "v0.9.0",
-                "name": "v0.9.0 Stable",
+                "tag_name": "v2.0.0",
+                "name": "v2.0.0 Stable",
                 "body": f"Deprecated: v{APP_VERSION}",
                 "draft": False,
                 "assets": []
@@ -182,14 +182,14 @@ class TestVersionMarkingSystem(unittest.TestCase):
         avail, info = results[0]
         self.assertTrue(avail)
         self.assertEqual(info["current_status"], VERSION_STATUS_DEPRECATED)
-        self.assertEqual(info["target_version"], "0.9.0")
+        self.assertEqual(info["target_version"], "2.0.0")
 
     def test_version_check_worker_not_recommended_triggers_warning_prompt(self):
         # Setup mock releases where APP_VERSION is marked Not Recommended
         mock_releases = [
             {
-                "tag_name": "v0.9.0",
-                "name": "v0.9.0 Stable",
+                "tag_name": "v2.0.0",
+                "name": "v2.0.0 Stable",
                 "body": f"Not recommended: v{APP_VERSION}",
                 "draft": False,
                 "assets": []

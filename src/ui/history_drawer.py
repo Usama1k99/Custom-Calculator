@@ -177,16 +177,20 @@ class HistoryDrawer(QFrame):
         self.export_btn = QPushButton("Export")
         self.export_btn.setProperty("class", "historyActionBtn")
         self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_btn.setEnabled(False)
         self.export_btn.clicked.connect(self._export_to_csv)
         bottom_row.addWidget(self.export_btn)
 
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.setProperty("class", "historyClearBtn")
         self.clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_btn.setEnabled(False)
         self.clear_btn.clicked.connect(self._clear_history)
         bottom_row.addWidget(self.clear_btn)
 
         layout.addLayout(bottom_row)
+
+        self.search_box.setEnabled(False)
 
         if self.isVisible():
             self.refresh_history()
